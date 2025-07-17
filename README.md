@@ -26,7 +26,8 @@ pip install git+https://github.com/Tantalum-Labs/PyAttackForge.git
 ```python
 from pyattackforge.client import PyAttackForgeClient
 
-client = PyAttackForgeClient(api_key="your-api-key")
+# Initialize client - Note: Make sure to set your AttackForge URL and API Key
+client = PyAttackForgeClient(api_key="your-api-key", base_url="https://demo.attackforge.com", dry_run=False)
 
 # Create a project
 project = client.create_project("My Project", scope=["Asset1", "Asset2"])
