@@ -84,3 +84,9 @@ Contributions are welcome! Please open issues or submit pull requests via GitHub
 ## Security
 
 **Never commit your API keys or other sensitive information to version control.**
+
+---
+
+## License
+
+This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](https://www.gnu.org/licenses/agpl-3.0.html).
