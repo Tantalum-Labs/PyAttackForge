@@ -1,9 +1,28 @@
 import requests
+import logging
 from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, Optional, Set, Tuple, List
 
+
+logger = logging.getLogger("pyattackforge")
 
 class PyAttackForgeClient:
-    def __init__(self, api_key, base_url="https://demo.attackforge.com", dry_run=False):
+    """
+    Python client for interacting with the AttackForge API.
+
+    Provides methods to manage assets, projects, and vulnerabilities.
+    Supports dry-run mode for testing without making real API calls.
+    """
+
+    def __init__(self, api_key: str, base_url: str = "https://demo.attackforge.com", dry_run: bool = False):
+        """
+        Initialize the PyAttackForgeClient.
+
+        Args:
+            api_key (str): Your AttackForge API key.
+            base_url (str, optional): The base URL for the AttackForge instance. Defaults to "https://demo.attackforge.com".
+            dry_run (bool, optional): If True, no real API calls are made. Defaults to False.
+        """
         self.base_url = base_url.rstrip("/")
         self.headers = {
             "X-SSAPI-KEY": api_key,
@@ -14,18 +33,42 @@ class PyAttackForgeClient:
         self._asset_cache = None
         self._project_scope_cache = {}  # {project_id: set(asset_names)}
 
-    def _request(self, method, endpoint, json_data=None, params=None):
+    def _request(
+        self,
+        method: str,
+        endpoint: str,
+        json_data: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None
+    ) -> Any:
+        """
+        Internal method to send an HTTP request to the AttackForge API.
+
+        Args:
+            method (str): HTTP method (get, post, put, etc.).
+            endpoint (str): API endpoint path.
+            json_data (dict, optional): JSON payload for the request.
+            params (dict, optional): Query parameters.
+
+        Returns:
+            Response: The HTTP response object.
+        """
         url = f"{self.base_url}{endpoint}"
         if self.dry_run:
-            print(f"[DRY RUN] {method.upper()} {url}")
+            logger.info("[DRY RUN] %s %s", method.upper(), url)
             if json_data:
-                print("Payload:", json_data)
+                logger.info("Payload: %s", json_data)
             if params:
-                print("Params:", params)
+                logger.info("Params: %s", params)
             return DummyResponse()
         return requests.request(method, url, headers=self.headers, json=json_data, params=params)
 
-    def get_assets(self):
+    def get_assets(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Retrieve all assets from AttackForge.
+
+        Returns:
+            dict: Mapping of asset names to asset details.
+        """
         if self._asset_cache is None:
             self._asset_cache = {}
             skip, limit = 0, 500
@@ -41,10 +84,31 @@ class PyAttackForgeClient:
                 skip += limit
         return self._asset_cache
 
-    def get_asset_by_name(self, name):
+    def get_asset_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve an asset by its name.
+
+        Args:
+            name (str): The asset name.
+
+        Returns:
+            dict or None: Asset details if found, else None.
+        """
         return self.get_assets().get(name)
 
-    def create_asset(self, asset_data):
+    def create_asset(self, asset_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a new asset in AttackForge.
+
+        Args:
+            asset_data (dict): Asset details.
+
+        Returns:
+            dict: Created asset details.
+
+        Raises:
+            RuntimeError: If asset creation fails.
+        """
         resp = self._request("post", "/api/ss/library/asset", json_data=asset_data)
         if resp.status_code == 201:
             asset = resp.json()
@@ -54,7 +118,16 @@ class PyAttackForgeClient:
             return self.get_asset_by_name(asset_data["name"])
         raise RuntimeError(f"Asset creation failed: {resp.text}")
 
-    def get_project_by_name(self, name):
+    def get_project_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a project by its name.
+
+        Args:
+            name (str): The project name.
+
+        Returns:
+            dict or None: Project details if found, else None.
+        """
         params = {
             "startDate": "2000-01-01T00:00:00.000Z",
             "endDate": "2100-01-01T00:00:00.000Z",
@@ -66,7 +139,19 @@ class PyAttackForgeClient:
                 return proj
         return None
 
-    def get_project_scope(self, project_id):
+    def get_project_scope(self, project_id: str) -> Set[str]:
+        """
+        Retrieve the scope (assets) of a project.
+
+        Args:
+            project_id (str): The project ID.
+
+        Returns:
+            set: Set of asset names in the project scope.
+
+        Raises:
+            RuntimeError: If project retrieval fails.
+        """
         if project_id in self._project_scope_cache:
             return self._project_scope_cache[project_id]
 
@@ -78,7 +163,20 @@ class PyAttackForgeClient:
         self._project_scope_cache[project_id] = scope
         return scope
 
-    def update_project_scope(self, project_id, new_assets):
+    def update_project_scope(self, project_id: str, new_assets: List[str]) -> Dict[str, Any]:
+        """
+        Update the scope (assets) of a project.
+
+        Args:
+            project_id (str): The project ID.
+            new_assets (iterable): Asset names to add to the scope.
+
+        Returns:
+            dict: Updated project details.
+
+        Raises:
+            RuntimeError: If update fails.
+        """
         current_scope = self.get_project_scope(project_id)
         updated_scope = list(current_scope.union(new_assets))
         resp = self._request("put", f"/api/ss/project/{project_id}", json_data={"scope": updated_scope})
@@ -87,7 +185,20 @@ class PyAttackForgeClient:
         self._project_scope_cache[project_id] = set(updated_scope)
         return resp.json()
 
-    def create_project(self, name, **kwargs):
+    def create_project(self, name: str, **kwargs) -> Dict[str, Any]:
+        """
+        Create a new project in AttackForge.
+
+        Args:
+            name (str): Project name.
+            **kwargs: Additional project fields.
+
+        Returns:
+            dict: Created project details.
+
+        Raises:
+            RuntimeError: If project creation fails.
+        """
         start, end = get_default_dates()
         payload = {
             "name": name,
@@ -111,7 +222,20 @@ class PyAttackForgeClient:
             return resp.json()
         raise RuntimeError(f"Project creation failed: {resp.text}")
 
-    def update_project(self, project_id, update_fields):
+    def update_project(self, project_id: str, update_fields: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update an existing project.
+
+        Args:
+            project_id (str): The project ID.
+            update_fields (dict): Fields to update.
+
+        Returns:
+            dict: Updated project details.
+
+        Raises:
+            RuntimeError: If update fails.
+        """
         resp = self._request("put", f"/api/ss/project/{project_id}", json_data=update_fields)
         if resp.status_code in (200, 201):
             return resp.json()
@@ -119,11 +243,27 @@ class PyAttackForgeClient:
 
     def create_vulnerability(
         self,
-        vulnerability_data,
-        auto_create_assets=False,
-        default_asset_type="Placeholder",
-        default_asset_library_ids=None
-    ):
+        vulnerability_data: Dict[str, Any],
+        auto_create_assets: bool = False,
+        default_asset_type: str = "Placeholder",
+        default_asset_library_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new vulnerability in AttackForge.
+
+        Args:
+            vulnerability_data (dict): Vulnerability details (must include 'projectId').
+            auto_create_assets (bool, optional): If True, create missing assets automatically.
+            default_asset_type (str, optional): Asset type for auto-created assets.
+            default_asset_library_ids (list, optional): Library IDs for auto-created assets.
+
+        Returns:
+            dict: Created vulnerability details.
+
+        Raises:
+            ValueError: If 'projectId' is missing.
+            RuntimeError: If vulnerability creation fails.
+        """
         affected_assets = vulnerability_data.get("affected_assets", [])
         project_id = vulnerability_data.get("projectId")
         if not project_id:
@@ -137,7 +277,7 @@ class PyAttackForgeClient:
                 if not asset_name:
                     continue
                 if not self.get_asset_by_name(asset_name):
-                    print(f"[INFO] Asset '{asset_name}' not found. Creating it.")
+                    logger.info("Asset '%s' not found. Creating it.", asset_name)
                     asset_payload = {
                         "name": asset_name,
                         "type": default_asset_type,
@@ -152,7 +292,7 @@ class PyAttackForgeClient:
                     new_asset_names.append(asset_name)
 
         if new_asset_names:
-            print(f"[INFO] Adding {len(new_asset_names)} new assets to project '{project_id}' scope.")
+            logger.info("Adding %d new assets to project '%s' scope.", len(new_asset_names), project_id)
             self.update_project_scope(project_id, new_asset_names)
 
         resp = self._request("post", "/api/ss/vulnerability", json_data=vulnerability_data)
@@ -162,14 +302,23 @@ class PyAttackForgeClient:
 
 
 class DummyResponse:
-    def __init__(self):
+    """
+    Dummy response object for dry-run mode.
+    """
+    def __init__(self) -> None:
         self.status_code = 200
 
-    def json(self):
+    def json(self) -> Dict[str, Any]:
         return {}
 
 
-def get_default_dates():
+def get_default_dates() -> Tuple[str, str]:
+    """
+    Get default start and end dates for a project (now and 30 days from now, in ISO format).
+
+    Returns:
+        tuple: (start_date, end_date) as ISO 8601 strings.
+    """
     now = datetime.now(timezone.utc)
     start = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
     end = (now + timedelta(days=30)).isoformat(timespec="milliseconds").replace("+00:00", "Z")

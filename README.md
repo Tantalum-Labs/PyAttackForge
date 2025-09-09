@@ -26,7 +26,7 @@ A lightweight Python library for interacting with the AttackForge API.
 ## Use
 
    ```python
-   from pyattackforge.client import PyAttackForgeClient
+   from pyattackforge import PyAttackForgeClient
 
    # Initialize client - Note: Make sure to set your AttackForge URL and API Key
    client = PyAttackForgeClient(api_key="your-api-key", base_url="https://demo.attackforge.com", dry_run=False)
@@ -49,3 +49,38 @@ A lightweight Python library for interacting with the AttackForge API.
    )
 
    ```
+
+---
+
+## API Reference
+
+### `PyAttackForgeClient`
+
+- `__init__(api_key: str, base_url: str = ..., dry_run: bool = False)`
+- `get_assets() -> dict`
+- `get_asset_by_name(name: str) -> dict or None`
+- `create_asset(asset_data: dict) -> dict`
+- `get_project_by_name(name: str) -> dict or None`
+- `get_project_scope(project_id: str) -> set`
+- `update_project_scope(project_id: str, new_assets: list) -> dict`
+- `create_project(name: str, **kwargs) -> dict`
+- `update_project(project_id: str, update_fields: dict) -> dict`
+- `create_vulnerability(vulnerability_data: dict, auto_create_assets: bool = False, ...) -> dict`
+
+See the source code for full details and docstrings.
+
+---
+
+## Contributing
+
+Contributions are welcome! Please open issues or submit pull requests via GitHub.
+
+- Ensure code is PEP8-compliant and includes docstrings and type hints.
+- Add or update tests for new features or bugfixes.
+- Do **not** commit API keys or other secrets.
+
+---
+
+## Security
+
+**Never commit your API keys or other sensitive information to version control.**
