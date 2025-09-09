@@ -258,59 +258,101 @@ class PyAttackForgeClient:
 
     def create_vulnerability(
         self,
-        vulnerability_data: Dict[str, Any],
-        auto_create_assets: bool = False,
-        default_asset_type: str = "Placeholder",
-        default_asset_library_ids: Optional[List[str]] = None
+        project_id: str,
+        title: str,
+        affected_asset_name: str,
+        priority: str,
+        likelihood_of_exploitation: int,
+        description: str,
+        attack_scenario: str,
+        remediation_recommendation: str,
+        steps_to_reproduce: str,
+        tags: Optional[list] = None,
+        notes: Optional[list] = None,
+        is_zeroday: bool = False,
+        is_visible: bool = True,
+        import_to_library: Optional[str] = None,
+        import_source: Optional[str] = None,
+        import_source_id: Optional[str] = None,
+        custom_fields: Optional[list] = None,
+        linked_testcases: Optional[list] = None,
+        custom_tags: Optional[list] = None,
     ) -> Dict[str, Any]:
         """
-        Create a new vulnerability in AttackForge.
+        Create a new security finding (vulnerability) in AttackForge.
 
         Args:
-            vulnerability_data (dict): Vulnerability details (must include 'projectId').
-            auto_create_assets (bool, optional): If True, create missing assets automatically.
-            default_asset_type (str, optional): Asset type for auto-created assets.
-            default_asset_library_ids (list, optional): Library IDs for auto-created assets.
+            project_id (str): The project ID.
+            title (str): The title of the finding.
+            affected_asset_name (str): The name of the affected asset.
+            priority (str): The priority (e.g., "Critical").
+            likelihood_of_exploitation (int): Likelihood of exploitation (e.g., 10).
+            description (str): Description of the finding.
+            attack_scenario (str): Attack scenario details.
+            remediation_recommendation (str): Remediation recommendation.
+            steps_to_reproduce (str): Steps to reproduce the finding.
+            tags (list, optional): List of tags.
+            notes (list, optional): List of notes.
+            is_zeroday (bool, optional): Whether this is a zero-day finding.
+            is_visible (bool, optional): Whether the finding is visible.
+            import_to_library (str, optional): Library to import to.
+            import_source (str, optional): Source of import.
+            import_source_id (str, optional): Source ID for import.
+            custom_fields (list, optional): List of custom fields.
+            linked_testcases (list, optional): List of linked testcases.
+            custom_tags (list, optional): List of custom tags.
 
         Returns:
             dict: Created vulnerability details.
 
         Raises:
-            ValueError: If 'projectId' is missing.
+            ValueError: If any required field is missing.
             RuntimeError: If vulnerability creation fails.
         """
-        affected_assets = vulnerability_data.get("affected_assets", [])
-        project_id = vulnerability_data.get("projectId")
-        if not project_id:
-            raise ValueError("vulnerability_data must include 'projectId'")
+        # Validate required fields
+        required_fields = [
+            ("project_id", project_id),
+            ("title", title),
+            ("affected_asset_name", affected_asset_name),
+            ("priority", priority),
+            ("likelihood_of_exploitation", likelihood_of_exploitation),
+            ("description", description),
+            ("attack_scenario", attack_scenario),
+            ("remediation_recommendation", remediation_recommendation),
+            ("steps_to_reproduce", steps_to_reproduce),
+        ]
+        for field_name, value in required_fields:
+            if value is None:
+                raise ValueError(f"Missing required field: {field_name}")
 
-        new_asset_names = []
+        payload = {
+            "projectId": project_id,
+            "title": title,
+            "affected_asset_name": affected_asset_name,
+            "priority": priority,
+            "likelihood_of_exploitation": likelihood_of_exploitation,
+            "description": description,
+            "attack_scenario": attack_scenario,
+            "remediation_recommendation": remediation_recommendation,
+            "steps_to_reproduce": steps_to_reproduce,
+            "tags": tags or [],
+            "is_zeroday": is_zeroday,
+            "is_visible": is_visible,
+            "import_to_library": import_to_library,
+            "import_source": import_source,
+            "import_source_id": import_source_id,
+            "custom_fields": custom_fields or [],
+            "linked_testcases": linked_testcases or [],
+            "custom_tags": custom_tags or [],
+        }
+        # Only include notes if it is a non-empty list
+        if notes:
+            payload["notes"] = notes
 
-        if auto_create_assets:
-            for asset_ref in affected_assets:
-                asset_name = asset_ref.get("assetName")
-                if not asset_name:
-                    continue
-                if not self.get_asset_by_name(asset_name):
-                    logger.info("Asset '%s' not found. Creating it.", asset_name)
-                    asset_payload = {
-                        "name": asset_name,
-                        "type": default_asset_type,
-                        "external_id": asset_name,
-                        "details": "Auto-created by PyAttackForge",
-                        "groups": [],
-                        "custom_fields": [],
-                    }
-                    if default_asset_library_ids:
-                        asset_payload["asset_library_ids"] = default_asset_library_ids
-                    self.create_asset(asset_payload)
-                    new_asset_names.append(asset_name)
+        # Remove None values (for optional fields)
+        payload = {k: v for k, v in payload.items() if v is not None}
 
-        if new_asset_names:
-            logger.info("Adding %d new assets to project '%s' scope.", len(new_asset_names), project_id)
-            self.update_project_scope(project_id, new_asset_names)
-
-        resp = self._request("post", "/api/ss/vulnerability", json_data=vulnerability_data)
+        resp = self._request("post", "/api/ss/vulnerability", json_data=payload)
         if resp.status_code in (200, 201):
             return resp.json()
         raise RuntimeError(f"Vulnerability creation failed: {resp.text}")
@@ -322,6 +364,7 @@ class DummyResponse:
     """
     def __init__(self) -> None:
         self.status_code = 200
+        self.text = "[DRY RUN] No real API call performed."
 
     def json(self) -> Dict[str, Any]:
         return {}
