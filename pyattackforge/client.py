@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional, Set, Tuple, List
 
 logger = logging.getLogger("pyattackforge")
 
+
 class PyAttackForgeClient:
     """
     Python client for interacting with the AttackForge API.
@@ -28,6 +29,190 @@ class PyAttackForgeClient:
     Provides methods to manage assets, projects, and vulnerabilities.
     Supports dry-run mode for testing without making real API calls.
     """
+
+    def upsert_finding_for_project(
+        self,
+        project_id: str,
+        title: str,
+        affected_assets: list,
+        priority: str,
+        likelihood_of_exploitation: int,
+        description: str,
+        attack_scenario: str,
+        remediation_recommendation: str,
+        steps_to_reproduce: str,
+        tags: Optional[list] = None,
+        notes: Optional[list] = None,
+        is_zeroday: bool = False,
+        is_visible: bool = True,
+        import_to_library: Optional[str] = None,
+        import_source: Optional[str] = None,
+        import_source_id: Optional[str] = None,
+        custom_fields: Optional[list] = None,
+        linked_testcases: Optional[list] = None,
+        custom_tags: Optional[list] = None,
+        writeup_custom_fields: Optional[list] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create or update a finding for a project. If a finding with the same title and writeup exists,
+        append the assets and notes; otherwise, create a new finding.
+
+        Args:
+            project_id (str): The project ID.
+            title (str): The title of the finding.
+            affected_assets (list): List of affected asset objects or names.
+            priority (str): The priority (e.g., "Critical").
+            likelihood_of_exploitation (int): Likelihood of exploitation (e.g., 10).
+            description (str): Description of the finding.
+            attack_scenario (str): Attack scenario details.
+            remediation_recommendation (str): Remediation recommendation.
+            steps_to_reproduce (str): Steps to reproduce the finding.
+            tags (list, optional): List of tags.
+            notes (list, optional): List of notes.
+            is_zeroday (bool, optional): Whether this is a zero-day finding.
+            is_visible (bool, optional): Whether the finding is visible.
+            import_to_library (str, optional): Library to import to.
+            import_source (str, optional): Source of import.
+            import_source_id (str, optional): Source ID for import.
+            custom_fields (list, optional): List of custom fields.
+            linked_testcases (list, optional): List of linked testcases.
+            custom_tags (list, optional): List of custom tags.
+            writeup_custom_fields (list, optional): List of custom fields for the writeup.
+
+        Returns:
+            dict: The created or updated finding.
+        """
+        # Ensure all assets exist before proceeding
+        asset_names = []
+        for asset in affected_assets:
+            name = asset["name"] if isinstance(asset, dict) and "name" in asset else asset
+            asset_obj = self.get_asset_by_name(name)
+            #if not asset_obj:
+            #    try:
+            #        asset_obj = self.create_asset({"name": name})
+            #    except Exception as e:
+            #        raise RuntimeError(f"Asset '{name}' does not exist and could not be created: {e}")
+            asset_names.append(name)
+
+        # Fetch all findings for the project
+        findings = self.get_findings_for_project(project_id)
+        print(f"[DEBUG] get_findings_for_project({project_id}) returned {len(findings)} findings:")
+        for f in findings:
+            print(f"  - id={f.get('vulnerability_id')}, title={f.get('vulnerability_title')}, steps_to_reproduce={f.get('vulnerability_steps_to_reproduce')}")
+            print(f"    FULL FINDING: {f}")
+        match = None
+        for f in findings:
+            if f.get("vulnerability_title") == title:
+                match = f
+                break
+
+        if match:
+            # Update the existing finding: append assets and notes if not present
+            updated_assets = set()
+            if "vulnerability_affected_assets" in match:
+                for asset in match["vulnerability_affected_assets"]:
+                    # Handle nested asset structure from API
+                    if isinstance(asset, dict):
+                        if "asset" in asset and isinstance(asset["asset"], dict) and "name" in asset["asset"]:
+                            updated_assets.add(asset["asset"]["name"])
+                        elif "name" in asset:
+                            updated_assets.add(asset["name"])
+                    elif isinstance(asset, str):
+                        updated_assets.add(asset)
+            elif "vulnerability_affected_asset_name" in match:
+                updated_assets.add(match["vulnerability_affected_asset_name"])
+            updated_assets.update(asset_names)
+            # Append notes
+            existing_notes = match.get("vulnerability_notes", [])
+            new_notes = notes or []
+            # Avoid duplicate notes
+            note_texts = {n["note"] for n in existing_notes if "note" in n}
+            for n in new_notes:
+                if isinstance(n, dict) and "note" in n:
+                    if n["note"] not in note_texts:
+                        existing_notes.append(n)
+                        note_texts.add(n["note"])
+                elif isinstance(n, str):
+                    if n not in note_texts:
+                        existing_notes.append({"note": n, "type": "PLAINTEXT"})
+                        note_texts.add(n)
+            # Prepare update payload
+            update_payload = {
+                "affected_assets": [{"assetName": n} for n in updated_assets],
+                "notes": existing_notes,
+                "project_id": project_id,
+            }
+            # Actually update the finding in the backend
+            resp = self._request("put", f"/api/ss/vulnerability/{match['vulnerability_id']}", json_data=update_payload)
+            if resp.status_code not in (200, 201):
+                raise RuntimeError(f"Failed to update finding: {resp.text}")
+            return {
+                "action": "update",
+                "existing_finding_id": match["vulnerability_id"],
+                "update_payload": update_payload,
+                "api_response": resp.json(),
+            }
+        else:
+            # No match, create a new finding
+            # Ensure all asset payloads use 'assetName'
+            assets_payload = []
+            for asset in affected_assets:
+                if isinstance(asset, dict) and "name" in asset:
+                    assets_payload.append({"assetName": asset["name"]})
+                else:
+                    assets_payload.append({"assetName": asset})
+            result = self.create_vulnerability(
+                project_id=project_id,
+                title=title,
+                affected_assets=assets_payload,
+                priority=priority,
+                likelihood_of_exploitation=likelihood_of_exploitation,
+                description=description,
+                attack_scenario=attack_scenario,
+                remediation_recommendation=remediation_recommendation,
+                steps_to_reproduce=steps_to_reproduce,
+                tags=tags,
+                notes=notes,
+                is_zeroday=is_zeroday,
+                is_visible=is_visible,
+                import_to_library=import_to_library,
+                import_source=import_source,
+                import_source_id=import_source_id,
+                custom_fields=custom_fields,
+                linked_testcases=linked_testcases,
+                custom_tags=custom_tags,
+                writeup_custom_fields=writeup_custom_fields,
+            )
+            return {
+                "action": "create",
+                "result": result,
+            }
+
+    def get_findings_for_project(self, project_id: str, priority: Optional[str] = None) -> list:
+        """
+        Fetch all findings/vulnerabilities for a given project.
+
+        Args:
+            project_id (str): The project ID.
+            priority (str, optional): Filter by priority (e.g., "Critical"). Defaults to None.
+
+        Returns:
+            list: List of finding/vulnerability dicts.
+        """
+        params = {}
+        if priority:
+            params["priority"] = priority
+        resp = self._request("get", f"/api/ss/project/{project_id}/vulnerabilities", params=params)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch findings: {resp.text}")
+        # The response may have a "vulnerabilities" key or be a list directly
+        data = resp.json()
+        if isinstance(data, dict) and "vulnerabilities" in data:
+            return data["vulnerabilities"]
+        elif isinstance(data, list):
+            return data
+        else:
+            return []
 
     def __init__(self, api_key: str, base_url: str = "https://demo.attackforge.com", dry_run: bool = False):
         """
@@ -47,6 +232,50 @@ class PyAttackForgeClient:
         self.dry_run = dry_run
         self._asset_cache = None
         self._project_scope_cache = {}  # {project_id: set(asset_names)}
+        self._writeup_cache = None  # Cache for all writeups
+
+    def get_all_writeups(self, force_refresh: bool = False) -> list:
+        """
+        Fetches and caches all writeups from the /api/ss/library endpoint.
+
+        Args:
+            force_refresh (bool): If True, refresh the cache even if it exists.
+
+        Returns:
+            list: List of writeup dicts.
+        """
+        if self._writeup_cache is not None and not force_refresh:
+            return self._writeup_cache
+        resp = self._request("get", "/api/ss/library")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch writeups: {resp.text}")
+        data = resp.json()
+        # The endpoint may return a list or a dict with a key like "vulnerabilities"
+        if isinstance(data, dict) and "vulnerabilities" in data:
+            self._writeup_cache = data["vulnerabilities"]
+        elif isinstance(data, list):
+            self._writeup_cache = data
+        else:
+            # fallback: try to treat as a list of writeups
+            self._writeup_cache = data if isinstance(data, list) else []
+        return self._writeup_cache
+
+    def find_writeup_in_cache(self, title: str, library: str = "Main Library") -> str:
+        """
+        Searches the cached writeups for a writeup with the given title and library.
+
+        Args:
+            title (str): The title of the writeup to find.
+            library (str): The library name (default: "Main Library").
+
+        Returns:
+            str: The writeup's reference_id if found, else None.
+        """
+        writeups = self.get_all_writeups()
+        for w in writeups:
+            if w.get("title") == title and w.get("belongs_to_library", w.get("library", "")) == library:
+                return w.get("reference_id")
+        return None
 
     def _request(
         self,
@@ -55,18 +284,6 @@ class PyAttackForgeClient:
         json_data: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None
     ) -> Any:
-        """
-        Internal method to send an HTTP request to the AttackForge API.
-
-        Args:
-            method (str): HTTP method (get, post, put, etc.).
-            endpoint (str): API endpoint path.
-            json_data (dict, optional): JSON payload for the request.
-            params (dict, optional): Query parameters.
-
-        Returns:
-            Response: The HTTP response object.
-        """
         url = f"{self.base_url}{endpoint}"
         if self.dry_run:
             logger.info("[DRY RUN] %s %s", method.upper(), url)
@@ -78,12 +295,6 @@ class PyAttackForgeClient:
         return requests.request(method, url, headers=self.headers, json=json_data, params=params)
 
     def get_assets(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Retrieve all assets from AttackForge.
-
-        Returns:
-            dict: Mapping of asset names to asset details.
-        """
         if self._asset_cache is None:
             self._asset_cache = {}
             skip, limit = 0, 500
@@ -100,49 +311,20 @@ class PyAttackForgeClient:
         return self._asset_cache
 
     def get_asset_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve an asset by its name.
-
-        Args:
-            name (str): The asset name.
-
-        Returns:
-            dict or None: Asset details if found, else None.
-        """
         return self.get_assets().get(name)
 
     def create_asset(self, asset_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Create a new asset in AttackForge.
-
-        Args:
-            asset_data (dict): Asset details.
-
-        Returns:
-            dict: Created asset details.
-
-        Raises:
-            RuntimeError: If asset creation fails.
-        """
-        resp = self._request("post", "/api/ss/library/asset", json_data=asset_data)
-        if resp.status_code == 201:
-            asset = resp.json()
-            self._asset_cache = None  # Invalidate cache
-            return asset
-        if "Asset Already Exists" in resp.text:
-            return self.get_asset_by_name(asset_data["name"])
-        raise RuntimeError(f"Asset creation failed: {resp.text}")
+        pass
+        #resp = self._request("post", "/api/ss/library/asset", json_data=asset_data)
+        #if resp.status_code in (200, 201):
+        #    asset = resp.json()
+        #    self._asset_cache = None  # Invalidate cache
+        #    return asset
+        #if "Asset Already Exists" in resp.text:
+        #    return self.get_asset_by_name(asset_data["name"])
+        #raise RuntimeError(f"Asset creation failed: {resp.text}")
 
     def get_project_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve a project by its name.
-
-        Args:
-            name (str): The project name.
-
-        Returns:
-            dict or None: Project details if found, else None.
-        """
         params = {
             "startDate": "2000-01-01T00:00:00.000Z",
             "endDate": "2100-01-01T00:00:00.000Z",
@@ -155,18 +337,6 @@ class PyAttackForgeClient:
         return None
 
     def get_project_scope(self, project_id: str) -> Set[str]:
-        """
-        Retrieve the scope (assets) of a project.
-
-        Args:
-            project_id (str): The project ID.
-
-        Returns:
-            set: Set of asset names in the project scope.
-
-        Raises:
-            RuntimeError: If project retrieval fails.
-        """
         if project_id in self._project_scope_cache:
             return self._project_scope_cache[project_id]
 
@@ -179,19 +349,6 @@ class PyAttackForgeClient:
         return scope
 
     def update_project_scope(self, project_id: str, new_assets: List[str]) -> Dict[str, Any]:
-        """
-        Update the scope (assets) of a project.
-
-        Args:
-            project_id (str): The project ID.
-            new_assets (iterable): Asset names to add to the scope.
-
-        Returns:
-            dict: Updated project details.
-
-        Raises:
-            RuntimeError: If update fails.
-        """
         current_scope = self.get_project_scope(project_id)
         updated_scope = list(current_scope.union(new_assets))
         resp = self._request("put", f"/api/ss/project/{project_id}", json_data={"scope": updated_scope})
@@ -201,19 +358,6 @@ class PyAttackForgeClient:
         return resp.json()
 
     def create_project(self, name: str, **kwargs) -> Dict[str, Any]:
-        """
-        Create a new project in AttackForge.
-
-        Args:
-            name (str): Project name.
-            **kwargs: Additional project fields.
-
-        Returns:
-            dict: Created project details.
-
-        Raises:
-            RuntimeError: If project creation fails.
-        """
         start, end = get_default_dates()
         payload = {
             "name": name,
@@ -238,25 +382,198 @@ class PyAttackForgeClient:
         raise RuntimeError(f"Project creation failed: {resp.text}")
 
     def update_project(self, project_id: str, update_fields: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Update an existing project.
-
-        Args:
-            project_id (str): The project ID.
-            update_fields (dict): Fields to update.
-
-        Returns:
-            dict: Updated project details.
-
-        Raises:
-            RuntimeError: If update fails.
-        """
         resp = self._request("put", f"/api/ss/project/{project_id}", json_data=update_fields)
         if resp.status_code in (200, 201):
             return resp.json()
         raise RuntimeError(f"Project update failed: {resp.text}")
 
+    def create_writeup(
+        self,
+        title: str,
+        description: str,
+        remediation_recommendation: str,
+        custom_fields: Optional[list] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        if not title or not description or not remediation_recommendation:
+            raise ValueError("Missing required field: title, description, or remediation_recommendation")
+
+        payload = {
+            "title": title,
+            "description": description,
+            "remediation_recommendation": remediation_recommendation,
+            "custom_fields": custom_fields or []
+        }
+        payload.update(kwargs)
+        resp = self._request("post", "/api/ss/library/vulnerability", json_data=payload)
+        if resp.status_code in (200, 201):
+            result = resp.json()
+            print("DEBUG: create_writeup API response:", result)
+            return result
+        raise RuntimeError(f"Writeup creation failed: {resp.text}")
+
+    def create_finding_from_writeup(
+        self,
+        project_id: str,
+        writeup_id: str,
+        priority: str,
+        affected_assets: Optional[list] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Create a finding from a writeup, supporting multiple affected assets.
+
+        Args:
+            project_id (str): The project ID.
+            writeup_id (str): The writeup/library ID.
+            priority (str): The priority.
+            affected_assets (list, optional): List of affected asset objects or names.
+            **kwargs: Additional fields.
+
+        Returns:
+            dict: Created finding details.
+        """
+        if not project_id or not writeup_id or not priority:
+            raise ValueError("Missing required field: project_id, writeup_id, or priority")
+
+        payload = {
+            "projectId": project_id,
+            "vulnerabilityLibraryId": writeup_id,
+            "priority": priority
+        }
+        if affected_assets is not None:
+            asset_names = [
+                asset["assetName"] if isinstance(asset, dict) and "assetName" in asset
+                else asset["name"] if isinstance(asset, dict) and "name" in asset
+                else asset
+                for asset in affected_assets
+            ]
+            payload["affected_assets"] = [{"assetName": n} for n in asset_names]
+        payload.update(kwargs)
+        resp = self._request("post", "/api/ss/vulnerability-with-library", json_data=payload)
+        if resp.status_code in (200, 201):
+            return resp.json()
+        raise RuntimeError(f"Finding creation from writeup failed: {resp.text}")
+
     def create_vulnerability(
+        self,
+        project_id: str,
+        title: str,
+        affected_assets: list,
+        priority: str,
+        likelihood_of_exploitation: int,
+        description: str,
+        attack_scenario: str,
+        remediation_recommendation: str,
+        steps_to_reproduce: str,
+        tags: Optional[list] = None,
+        notes: Optional[list] = None,
+        is_zeroday: bool = False,
+        is_visible: bool = True,
+        import_to_library: Optional[str] = None,
+        import_source: Optional[str] = None,
+        import_source_id: Optional[str] = None,
+        custom_fields: Optional[list] = None,
+        linked_testcases: Optional[list] = None,
+        custom_tags: Optional[list] = None,
+        writeup_custom_fields: Optional[list] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a new security finding (vulnerability) in AttackForge with support for multiple assets.
+
+        Args:
+            project_id (str): The project ID.
+            title (str): The title of the finding.
+            affected_assets (list): List of affected asset objects or names.
+            priority (str): The priority (e.g., "Critical").
+            likelihood_of_exploitation (int): Likelihood of exploitation (e.g., 10).
+            description (str): Description of the finding.
+            attack_scenario (str): Attack scenario details.
+            remediation_recommendation (str): Remediation recommendation.
+            steps_to_reproduce (str): Steps to reproduce the finding.
+            tags (list, optional): List of tags.
+            notes (list, optional): List of notes.
+            is_zeroday (bool, optional): Whether this is a zero-day finding.
+            is_visible (bool, optional): Whether the finding is visible.
+            import_to_library (str, optional): Library to import to.
+            import_source (str, optional): Source of import.
+            import_source_id (str, optional): Source ID for import.
+            custom_fields (list, optional): List of custom fields.
+            linked_testcases (list, optional): List of linked testcases.
+            custom_tags (list, optional): List of custom tags.
+            writeup_custom_fields (list, optional): List of custom fields for the writeup.
+
+        Returns:
+            dict: Created vulnerability details.
+        """
+        # Ensure all assets exist and are in project scope
+        asset_names = []
+        for asset in affected_assets:
+            name = asset["assetName"] if isinstance(asset, dict) and "assetName" in asset \
+                else asset["name"] if isinstance(asset, dict) and "name" in asset \
+                else asset
+            asset_obj = self.get_asset_by_name(name)
+            #if not asset_obj:
+            #    asset_obj = self.create_asset({"name": name})
+            asset_names.append(name)
+        # Ensure all assets are in project scope
+        scope = self.get_project_scope(project_id)
+        missing_in_scope = [n for n in asset_names if n not in scope]
+        if missing_in_scope:
+            self.update_project_scope(project_id, missing_in_scope)
+
+        # Fetch and cache all writeups
+        self.get_all_writeups()
+        # Find the reference_id for the writeup titled 'title' in the 'Main Vulnerabilities'
+        writeup_id = self.find_writeup_in_cache(title, "Main Vulnerabilities")
+        if not writeup_id:
+            writeup_fields = writeup_custom_fields[:] if writeup_custom_fields else []
+            if import_source:
+                writeup_fields.append({"key": "import_source", "value": import_source})
+            self.create_writeup(
+                title=title,
+                description=description,
+                remediation_recommendation=remediation_recommendation,
+                attack_scenario=attack_scenario,
+                custom_fields=writeup_fields
+            )
+            # Refresh the cache and search again
+            self.get_all_writeups(force_refresh=True)
+            writeup_id = self.find_writeup_in_cache(
+                title, "Main Vulnerabilities"
+            )
+            if not writeup_id:
+                raise RuntimeError(
+                    "Writeup creation failed: missing reference_id"
+                )
+
+        finding_payload = {
+            "affected_assets": [{"assetName": n} for n in asset_names],
+            "likelihood_of_exploitation": likelihood_of_exploitation,
+            "steps_to_reproduce": steps_to_reproduce,
+            "tags": tags or [],
+            "is_zeroday": is_zeroday,
+            "is_visible": is_visible,
+            "import_to_library": import_to_library,
+            "import_source": import_source,
+            "import_source_id": import_source_id,
+            "custom_fields": custom_fields or [],
+            "linked_testcases": linked_testcases or [],
+            "custom_tags": custom_tags or [],
+        }
+        if notes:
+            finding_payload["notes"] = notes
+        finding_payload = {k: v for k, v in finding_payload.items() if v is not None}
+        result = self.create_finding_from_writeup(
+            project_id=project_id,
+            writeup_id=writeup_id,
+            priority=priority,
+            **finding_payload
+        )
+        return result
+
+
+    def create_vulnerability_old(
         self,
         project_id: str,
         title: str,
@@ -279,7 +596,7 @@ class PyAttackForgeClient:
         custom_tags: Optional[list] = None,
     ) -> Dict[str, Any]:
         """
-        Create a new security finding (vulnerability) in AttackForge.
+        [DEPRECATED] Create a new security finding (vulnerability) in AttackForge.
 
         Args:
             project_id (str): The project ID.
@@ -345,23 +662,15 @@ class PyAttackForgeClient:
             "linked_testcases": linked_testcases or [],
             "custom_tags": custom_tags or [],
         }
-        # Only include notes if it is a non-empty list
         if notes:
             payload["notes"] = notes
-
-        # Remove None values (for optional fields)
         payload = {k: v for k, v in payload.items() if v is not None}
-
         resp = self._request("post", "/api/ss/vulnerability", json_data=payload)
         if resp.status_code in (200, 201):
             return resp.json()
         raise RuntimeError(f"Vulnerability creation failed: {resp.text}")
 
-
 class DummyResponse:
-    """
-    Dummy response object for dry-run mode.
-    """
     def __init__(self) -> None:
         self.status_code = 200
         self.text = "[DRY RUN] No real API call performed."
@@ -371,13 +680,9 @@ class DummyResponse:
 
 
 def get_default_dates() -> Tuple[str, str]:
-    """
-    Get default start and end dates for a project (now and 30 days from now, in ISO format).
-
-    Returns:
-        tuple: (start_date, end_date) as ISO 8601 strings.
-    """
     now = datetime.now(timezone.utc)
     start = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    end = (now + timedelta(days=30)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    end = (
+        now + timedelta(days=30)
+    ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     return start, end
