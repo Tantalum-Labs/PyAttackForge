@@ -23,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install setuptools
+        python -m pip install setuptools pytest
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run tests
@@ -77,7 +77,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install flake8 semgrep setuptools wheel build twine
+        python -m pip install flake8 pytest semgrep setuptools wheel build twine
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Lint with flake8
