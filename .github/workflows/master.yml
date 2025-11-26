@@ -1,0 +1,115 @@
+name: Python package
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.bump_version.outputs.new_version }}
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install setuptools
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Run tests
+      run: |
+         python -m pytest
+
+    - name: Extract and increment version using sed and awk
+      id: bump_version
+      run: |
+        version=$(sed -n "s/^ *version=['\"]\([^'\"]*\)['\"],/\1/p" setup.py)
+        new_version=$(echo $version | awk -F. -v OFS=. '{$NF += 1; print}')
+        sed -i "s;$version;$new_version;g" setup.py
+        echo "new_version=$new_version" >> $GITHUB_ENV
+        echo "new_version=$new_version" >> $GITHUB_OUTPUT
+
+    - name: Capture commit author
+      run: |
+        echo "commit_author=$(git log -1 --pretty=format:'%an')" >> "$GITHUB_ENV"
+
+    - name: Update ChangeLog
+      run: |
+        echo "## v${{ env.new_version }} - $(date +'%Y-%m-%d')" >> ChangeLog.md
+        echo "- Last commit by ${{ env.commit_author }}: Updated exploit database mappings" >> ChangeLog.md
+
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add -A
+        git commit -m "Update exploit database mapping, Bump version to ${{ env.new_version }} and update ChangeLogs"
+        git push
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: ${{ github.ref_name }}
+    - name: Sync to latest branch tip
+      run: |
+        git fetch origin "${GITHUB_REF_NAME}"
+        git checkout "origin/${GITHUB_REF_NAME}"
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install flake8 semgrep setuptools wheel build twine
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Lint with flake8
+      run: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=128 --statistics
+
+    - name: Run tests
+      run: |
+        python -m pytest
+
+    - name: Security scan with Semgrep
+      run: |
+        semgrep --config=p/r2c
+
+    - name: Build the package
+      run: python -m build
+
+    - name: Check and publish
+      if: success()
+      run: |
+        twine check dist/*
+        twine upload dist/*
+      env:
+        TWINE_USERNAME: __token__
+        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+    - name: Upload artifacts
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist-3.12-ubuntu-latest
+        path: dist/*
+        if-no-files-found: error
+        retention-days: 90
