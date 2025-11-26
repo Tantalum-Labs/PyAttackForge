@@ -12,6 +12,7 @@ A lightweight Python library for interacting with the AttackForge API.
 - Create findings from existing writeups by passing a `writeup_id`
 - Upload evidence to findings or testcases
 - Update/assign testcases to link findings or add notes
+- Link vulnerabilities to testcases via the client
 - Dry-run mode for testing
 
 ---
@@ -84,14 +85,20 @@ client.create_vulnerability(
 
 ### Creating a finding from an existing writeup
 
-If you already have a writeup/library entry and just need to create a finding bound to it, you can either pass `writeup_id` to `create_vulnerability` (as above) or call `create_finding_from_writeup` directly:
+If you already have a writeup/library entry and just need to create a finding bound to it, you can either pass `writeup_id` to `create_vulnerability` (as above) or call `create_finding_from_writeup` directly. Prefer the 24-character writeup id (`id` / `_id`); if only a numeric `reference_id` is available, use that. You can also specify the library key (e.g., `approved_writeups`, `Main Vulnerabilities`):
 
 ```python
 client.create_finding_from_writeup(
     project_id="abc123",
-    writeup_id="68e92c7a821c05c8405a8003",
+    writeup_id="68e92c7a821c05c8405a8003",  # writeup id
+    library="approved_writeups",             # optional: library key/name
     priority="High",
-    affected_assets=[{"name": "ssh-prod-1"}]
+    affected_assets=[{"name": "ssh-prod-1"}],
+    linked_testcases=["5e8017d2e1385f0c58e8f4f8"],  # optional: link testcases at creation
+    likelihood_of_exploitation=5,
+    steps_to_reproduce="1. Do something\n2. Observe result",
+    notes=[{"note": "Created via API", "type": "PLAINTEXT"}],
+    tags=["automation"]
 )
 ```
 
@@ -124,21 +131,44 @@ client.add_note_to_finding(
 
 Add a note/update to a testcase (PUT to the testcase endpoint):
 ```python
-client.update_testcase(
+client.add_note_to_testcase(
     project_id="abc123",
     testcase_id="5e8017d2e1385f0c58e8f4f8",
-    update_fields={
-        "details": "Observed during retest on 2025-09-19."
-    }
+    note="Observed during retest on 2025-09-19.",
+    status="Tested"  # optional
 )
 ```
 
-Associate findings to a testcase (merges with existing linked vulnerabilities if provided):
+Associate findings to a testcase (overwrites existing):
 ```python
 client.assign_findings_to_testcase(
     project_id="abc123",
     testcase_id="5e8017d2e1385f0c58e8f4f8",
-    vulnerability_ids=["66849b77950ab45e68fc7b48", "6768d29db1782d7362a2df5f"]
+    vulnerability_ids=["66849b77950ab45e68fc7b48", "6768d29db1782d7362a2df5f"],
+    additional_fields={"status": "Tested"} # optional
+)
+```
+Or link from the vulnerability side using its update endpoint:
+```python
+client.link_vulnerability_to_testcases(
+    vulnerability_id="69273ef0f4a7c85d03930667",
+    testcase_ids=["5e8017d2e1385f0c58e8f4f8"],
+    project_id="abc123",  # optional
+)
+```
+
+Fetch project testcases:
+```python
+testcases = client.get_testcases("abc123")
+```
+
+Merge and add findings to a testcase in one call:
+```python
+client.add_findings_to_testcase(
+    project_id="abc123",
+    testcase_id="5e8017d2e1385f0c58e8f4f8",
+    vulnerability_ids=["69273ef0f4a7c85d03930667"],
+    additional_fields={"status": "Tested"} # optional
 )
 ```
 
@@ -184,7 +214,7 @@ See the source code for full details and docstrings.
 - `create_vulnerability(
       project_id: str,
       title: str,
-      affected_asset_name: str,
+      affected_assets: list,
       priority: str,
       likelihood_of_exploitation: int,
       description: str,
@@ -201,32 +231,21 @@ See the source code for full details and docstrings.
       custom_fields: Optional[list] = None,
       linked_testcases: Optional[list] = None,
       custom_tags: Optional[list] = None,
+      writeup_custom_fields: Optional[list] = None,
   ) -> dict`
-
-See the source code for full details and docstrings.
-
----
-- `create_vulnerability(
-      project_id: str,
-      title: str,
-      affected_asset_name: str,
-      priority: str,
-      likelihood_of_exploitation: int,
-      description: str,
-      attack_scenario: str,
-      remediation_recommendation: str,
-      steps_to_reproduce: str,
-      tags: Optional[list] = None,
-      notes: Optional[list] = None,
-      is_zeroday: bool = False,
-      is_visible: bool = True,
-      import_to_library: Optional[str] = None,
-      import_source: Optional[str] = None,
-      import_source_id: Optional[str] = None,
-      custom_fields: Optional[list] = None,
-      linked_testcases: Optional[list] = None,
-      custom_tags: Optional[list] = None,
-  ) -> dict`
+- `create_finding_from_writeup(project_id: str, writeup_id: str, priority: str, affected_assets: Optional[list] = None, linked_testcases: Optional[list] = None, **kwargs) -> dict`
+- `get_findings_for_project(project_id: str, priority: Optional[str] = None) -> list`
+- `upsert_finding_for_project(...)`
+- `get_vulnerability(vulnerability_id: str) -> dict`
+- `add_note_to_finding(vulnerability_id: str, note: Any, note_type: str = "PLAINTEXT") -> dict`
+- `upload_finding_evidence(vulnerability_id: str, file_path: str) -> dict`
+- `upload_testcase_evidence(project_id: str, testcase_id: str, file_path: str) -> dict`
+- `get_testcases(project_id: str) -> list`
+- `get_testcase(project_id: str, testcase_id: str) -> dict or None`
+- `link_vulnerability_to_testcases(vulnerability_id: str, testcase_ids: List[str], project_id: Optional[str] = None) -> dict`
+- `assign_findings_to_testcase(project_id: str, testcase_id: str, vulnerability_ids: List[str], existing_linked_vulnerabilities: Optional[List[str]] = None, additional_fields: Optional[Dict[str, Any]] = None) -> dict`
+- `add_findings_to_testcase(project_id: str, testcase_id: str, vulnerability_ids: List[str], additional_fields: Optional[Dict[str, Any]] = None) -> dict`
+- `add_note_to_testcase(project_id: str, testcase_id: str, note: str, status: Optional[str] = None) -> dict`
 
 See the source code for full details and docstrings.
 

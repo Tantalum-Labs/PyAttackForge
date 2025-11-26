@@ -31,7 +31,7 @@ class PyAttackForgeClient:
     Supports dry-run mode for testing without making real API calls.
     """
 
-    def upsert_finding_for_project(
+    def upsert_finding_for_project(  # noqa: C901
         self,
         project_id: str,
         title: str,
@@ -87,20 +87,29 @@ class PyAttackForgeClient:
         asset_names = []
         for asset in affected_assets:
             name = asset["name"] if isinstance(asset, dict) and "name" in asset else asset
-            asset_obj = self.get_asset_by_name(name)
-            #if not asset_obj:
-            #    try:
-            #        asset_obj = self.create_asset({"name": name})
-            #    except Exception as e:
-            #        raise RuntimeError(f"Asset '{name}' does not exist and could not be created: {e}")
+            self.get_asset_by_name(name)
+            # if not asset_obj:
+            #     try:
+            #         asset_obj = self.create_asset({"name": name})
+            #     except Exception as e:
+            #         raise RuntimeError(f"Asset '{name}' does not exist and could not be created: {e}")
             asset_names.append(name)
 
         # Fetch all findings for the project
         findings = self.get_findings_for_project(project_id)
-        print(f"[DEBUG] get_findings_for_project({project_id}) returned {len(findings)} findings:")
+        logger.debug(
+            "Found %s findings for project %s",
+            len(findings),
+            project_id
+        )
         for f in findings:
-            print(f"  - id={f.get('vulnerability_id')}, title={f.get('vulnerability_title')}, steps_to_reproduce={f.get('vulnerability_steps_to_reproduce')}")
-            print(f"    FULL FINDING: {f}")
+            logger.debug(
+                "Finding id=%s title=%s steps=%s",
+                f.get("vulnerability_id"),
+                f.get("vulnerability_title"),
+                f.get("vulnerability_steps_to_reproduce"),
+            )
+            logger.debug("Finding payload: %s", f)
         match = None
         for f in findings:
             if f.get("vulnerability_title") == title:
@@ -293,6 +302,88 @@ class PyAttackForgeClient:
             raise RuntimeError(f"Failed to add note: {resp.text}")
         return resp.json()
 
+    def link_vulnerability_to_testcases(
+        self,
+        vulnerability_id: str,
+        testcase_ids: List[str],
+        project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Link a vulnerability to one or more testcases.
+
+        Args:
+            vulnerability_id (str): The vulnerability ID.
+            testcase_ids (list): List of testcase IDs to link.
+            project_id (str, optional): Project ID if required by the API.
+
+        Returns:
+            dict: API response.
+        """
+        if not vulnerability_id:
+            raise ValueError("Missing required field: vulnerability_id")
+        if not testcase_ids:
+            raise ValueError("testcase_ids must contain at least one ID")
+        payload: Dict[str, Any] = {
+            "linked_testcases": testcase_ids,
+        }
+        if project_id:
+            payload["project_id"] = project_id
+        resp = self._request(
+            "put",
+            f"/api/ss/vulnerability/{vulnerability_id}",
+            json_data=payload,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to link vulnerability to testcases: {resp.text}")
+        return resp.json()
+
+    def get_testcases(self, project_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve testcases for a project.
+
+        Args:
+            project_id (str): Project ID.
+
+        Returns:
+            list: List of testcase dicts.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        resp = self._request("get", f"/api/ss/project/{project_id}/testcases")
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to fetch testcases: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "testcases" in data:
+            return data.get("testcases", [])
+        if isinstance(data, list):
+            return data
+        return []
+
+    def get_testcase(self, project_id: str, testcase_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve a single testcase by ID.
+
+        Args:
+            project_id (str): Project ID.
+            testcase_id (str): Testcase ID.
+
+        Returns:
+            dict or None: Testcase details if found, else None.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase_id:
+            raise ValueError("Missing required field: testcase_id")
+        resp = self._request("get", f"/api/ss/project/{project_id}/testcase/{testcase_id}")
+        if resp.status_code == 404:
+            return None
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to fetch testcase: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "testcase" in data:
+            return data["testcase"]
+        return data if isinstance(data, dict) else None
+
     def upload_finding_evidence(self, vulnerability_id: str, file_path: str) -> Dict[str, Any]:
         """
         Upload evidence to a finding/vulnerability.
@@ -363,6 +454,45 @@ class PyAttackForgeClient:
             raise RuntimeError(f"Testcase evidence upload failed: {resp.text}")
         return resp.json()
 
+    def add_note_to_testcase(
+        self,
+        project_id: str,
+        testcase_id: str,
+        note: str,
+        status: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Add or replace testcase details with a note. Preserves the testcase name and status where possible.
+
+        Args:
+            project_id (str): Project ID.
+            testcase_id (str): Testcase ID.
+            note (str): Note text to set in the details field.
+            status (str, optional): Status to set (e.g., "Tested").
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase_id:
+            raise ValueError("Missing required field: testcase_id")
+        if not note:
+            raise ValueError("Missing required field: note")
+        # Fetch testcase to preserve name/status
+        testcases = self.get_testcases(project_id)
+        testcase = next((t for t in testcases if t.get("id") == testcase_id), None)
+        if not testcase:
+            raise RuntimeError(f"Testcase '{testcase_id}' not found in project '{project_id}'")
+
+        payload: Dict[str, Any] = {
+            "details": note,
+            "details_html": note,
+            "testcase": testcase.get("testcase") or testcase.get("title"),
+        }
+        payload["status"] = status if status else testcase.get("status")
+        return self.update_testcase(project_id, testcase_id, payload)
+
     def assign_findings_to_testcase(
         self,
         project_id: str,
@@ -428,6 +558,53 @@ class PyAttackForgeClient:
         if resp.status_code not in (200, 201):
             raise RuntimeError(f"Failed to update testcase: {resp.text}")
         return resp.json()
+
+    def add_findings_to_testcase(
+        self,
+        project_id: str,
+        testcase_id: str,
+        vulnerability_ids: List[str],
+        additional_fields: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Fetch a testcase, merge existing linked vulnerabilities with the provided list, and update it.
+
+        Args:
+            project_id (str): The project ID.
+            testcase_id (str): The testcase ID.
+            vulnerability_ids (list): List of vulnerability IDs to add.
+            additional_fields (dict, optional): Extra fields to include (e.g., status).
+
+        Returns:
+            dict: API response from the update.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase_id:
+            raise ValueError("Missing required field: testcase_id")
+        if not vulnerability_ids:
+            raise ValueError("vulnerability_ids must contain at least one ID")
+
+        testcases = self.get_testcases(project_id)
+        testcase = next((t for t in testcases if t.get("id") == testcase_id), None)
+        if not testcase:
+            raise RuntimeError(f"Testcase '{testcase_id}' not found in project '{project_id}'")
+
+        existing_raw = testcase.get("linked_vulnerabilities", []) or []
+        existing_ids: List[str] = []
+        for item in existing_raw:
+            if isinstance(item, dict) and item.get("id"):
+                existing_ids.append(item["id"])
+            elif isinstance(item, str):
+                existing_ids.append(item)
+
+        return self.assign_findings_to_testcase(
+            project_id=project_id,
+            testcase_id=testcase_id,
+            vulnerability_ids=vulnerability_ids,
+            existing_linked_vulnerabilities=existing_ids,
+            additional_fields=additional_fields,
+        )
 
     def __init__(self, api_key: str, base_url: str = "https://demo.attackforge.com", dry_run: bool = False):
         """
@@ -550,14 +727,14 @@ class PyAttackForgeClient:
 
     def create_asset(self, asset_data: Dict[str, Any]) -> Dict[str, Any]:
         pass
-        #resp = self._request("post", "/api/ss/library/asset", json_data=asset_data)
-        #if resp.status_code in (200, 201):
-        #    asset = resp.json()
-        #    self._asset_cache = None  # Invalidate cache
-        #    return asset
-        #if "Asset Already Exists" in resp.text:
-        #    return self.get_asset_by_name(asset_data["name"])
-        #raise RuntimeError(f"Asset creation failed: {resp.text}")
+        # resp = self._request("post", "/api/ss/library/asset", json_data=asset_data)
+        # if resp.status_code in (200, 201):
+        #     asset = resp.json()
+        #     self._asset_cache = None  # Invalidate cache
+        #     return asset
+        # if "Asset Already Exists" in resp.text:
+        #     return self.get_asset_by_name(asset_data["name"])
+        # raise RuntimeError(f"Asset creation failed: {resp.text}")
 
     def get_project_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         params = {
@@ -653,6 +830,7 @@ class PyAttackForgeClient:
         writeup_id: str,
         priority: str,
         affected_assets: Optional[list] = None,
+        linked_testcases: Optional[list] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -663,6 +841,7 @@ class PyAttackForgeClient:
             writeup_id (str): The writeup/library ID.
             priority (str): The priority.
             affected_assets (list, optional): List of affected asset objects or names.
+            linked_testcases (list, optional): List of testcase IDs to link.
             **kwargs: Additional fields.
 
         Returns:
@@ -684,6 +863,8 @@ class PyAttackForgeClient:
                 for asset in affected_assets
             ]
             payload["affected_assets"] = [{"assetName": n} for n in asset_names]
+        if linked_testcases:
+            payload["linked_testcases"] = linked_testcases
         payload.update(kwargs)
         resp = self._request("post", "/api/ss/vulnerability-with-library", json_data=payload)
         if resp.status_code in (200, 201):
@@ -749,9 +930,9 @@ class PyAttackForgeClient:
             name = asset["assetName"] if isinstance(asset, dict) and "assetName" in asset \
                 else asset["name"] if isinstance(asset, dict) and "name" in asset \
                 else asset
-            asset_obj = self.get_asset_by_name(name)
-            #if not asset_obj:
-            #    asset_obj = self.create_asset({"name": name})
+            self.get_asset_by_name(name)
+            # if not asset_obj:
+            #     asset_obj = self.create_asset({"name": name})
             asset_names.append(name)
         # Ensure all assets are in project scope
         scope = self.get_project_scope(project_id)
@@ -807,7 +988,6 @@ class PyAttackForgeClient:
             **finding_payload
         )
         return result
-
 
     def create_vulnerability_old(
         self,
@@ -905,6 +1085,7 @@ class PyAttackForgeClient:
         if resp.status_code in (200, 201):
             return resp.json()
         raise RuntimeError(f"Vulnerability creation failed: {resp.text}")
+
 
 class DummyResponse:
     def __init__(self) -> None:

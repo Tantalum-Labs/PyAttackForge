@@ -209,3 +209,5 @@ __marimo__/
 test*.py
 
 attackforgePushShodan.py
+pyattackforge.json
+scripts/

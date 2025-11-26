@@ -214,8 +214,10 @@ class TestPyAttackForgeClient(unittest.TestCase):
         )
         self.client.create_writeup = lambda **kwargs: {"reference_id": "dummy_writeup_id"}
         # Patch _request to simulate API update response
+
         class Resp:
             status_code = 200
+
             def json(self):
                 return {"updated": True}
             text = "OK"
@@ -365,6 +367,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
         class Resp:
             status_code = 200
             text = "OK"
+
             def json(self):
                 return {"ok": True}
 
@@ -376,6 +379,115 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertIsInstance(result, dict)
         notes = captured["json_data"].get("notes", [])
         self.assertEqual(len(notes), 1)
+
+    def test_get_testcases(self):
+        # DummyResponse returns {}, so should yield an empty list without raising
+        cases = self.client.get_testcases("proj1")
+        self.assertIsInstance(cases, list)
+        self.assertEqual(cases, [])
+
+    def test_get_testcase(self):
+        class Resp:
+            def __init__(self, status_code, body):
+                self.status_code = status_code
+                self._body = body
+
+            def json(self):
+                return self._body
+            text = "resp"
+
+        calls = []
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            calls.append(endpoint)
+            if "tc-ok" in endpoint:
+                return Resp(200, {"testcase": {"id": "tc-ok", "status": "Not Tested"}})
+            return Resp(404, {})
+
+        self.client._request = fake_request
+        tc_none = self.client.get_testcase("proj", "tc-missing")
+        self.assertIsNone(tc_none)
+        tc = self.client.get_testcase("proj", "tc-ok")
+        self.assertIsInstance(tc, dict)
+        self.assertEqual(tc.get("id"), "tc-ok")
+
+    def test_add_note_to_testcase(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            captured["json_data"] = json_data
+            return Resp()
+
+        self.client._request = fake_request
+        # Provide a mock get_testcases to satisfy lookup
+        self.client.get_testcases = lambda project_id: [
+            {"id": "tc1", "testcase": "Dummy", "status": "Not Tested"}
+        ]
+        resp = self.client.add_note_to_testcase("proj1", "tc1", "Note text", status="Tested")
+        self.assertIsInstance(resp, dict)
+        self.assertIn("details", captured["json_data"])
+        self.assertIn("details_html", captured["json_data"])
+        self.assertEqual(captured["json_data"]["status"], "Tested")
+
+    def test_link_vulnerability_to_testcases(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"linked": True}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["method"] = method
+            captured["endpoint"] = endpoint
+            captured["json_data"] = json_data
+            return Resp()
+
+        self.client._request = fake_request
+        resp = self.client.link_vulnerability_to_testcases("v1", ["tc1", "tc2"], project_id="proj1")
+        self.assertIsInstance(resp, dict)
+        self.assertEqual(captured["endpoint"], "/api/ss/vulnerability/v1")
+        self.assertEqual(captured["json_data"]["linked_testcases"], ["tc1", "tc2"])
+        self.assertEqual(captured["json_data"]["project_id"], "proj1")
+
+    def test_add_findings_to_testcase(self):
+        captured = {}
+        # Simulate existing testcase with one linked vuln (as dict)
+        self.client.get_testcases = lambda project_id: [
+            {
+                "id": "tc1",
+                "linked_vulnerabilities": [{"id": "existing"}],
+            }
+        ]
+
+        def fake_assign(project_id, testcase_id, vulnerability_ids, existing_linked_vulnerabilities=None, additional_fields=None):
+            captured["project_id"] = project_id
+            captured["testcase_id"] = testcase_id
+            captured["vulnerability_ids"] = vulnerability_ids
+            captured["existing_linked_vulnerabilities"] = existing_linked_vulnerabilities
+            captured["additional_fields"] = additional_fields
+            return {"assigned": True}
+
+        self.client.assign_findings_to_testcase = fake_assign
+        resp = self.client.add_findings_to_testcase(
+            "proj1",
+            "tc1",
+            ["new1", "new2"],
+            additional_fields={"status": "Tested"},
+        )
+        self.assertIsInstance(resp, dict)
+        self.assertEqual(captured["existing_linked_vulnerabilities"], ["existing"])
+        self.assertEqual(captured["vulnerability_ids"], ["new1", "new2"])
+        self.assertEqual(captured["additional_fields"], {"status": "Tested"})
 
 
 if __name__ == "__main__":
