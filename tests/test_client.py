@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from pyattackforge import PyAttackForgeClient
 
@@ -83,6 +85,34 @@ class TestPyAttackForgeClient(unittest.TestCase):
             ]
         )
         self.assertIsInstance(vuln, dict)
+
+    def test_create_vulnerability_with_existing_writeup_id(self):
+        # Ensure the client uses the provided writeup_id and does not attempt to create/search
+        self.client.get_all_writeups = lambda force_refresh=False: []
+        self.client.find_writeup_in_cache = lambda title, library="Main Vulnerabilities": None
+        captured = {}
+
+        def fake_create_from_writeup(**kwargs):
+            captured.update(kwargs)
+            return {"created": True, "writeup_id": kwargs.get("writeup_id")}
+
+        self.client.create_finding_from_writeup = fake_create_from_writeup
+        vuln = self.client.create_vulnerability(
+            project_id="dummy",
+            title="Existing Writeup Vuln",
+            affected_assets=[{"name": "AssetExisting"}],
+            priority="High",
+            likelihood_of_exploitation=5,
+            description="desc",
+            attack_scenario="scenario",
+            remediation_recommendation="remed",
+            steps_to_reproduce="steps",
+            writeup_id="writeup-123"
+        )
+        self.assertEqual(vuln.get("writeup_id"), "writeup-123")
+        self.assertEqual(captured.get("writeup_id"), "writeup-123")
+        assets = captured.get("affected_assets", [])
+        self.assertEqual(assets, [{"assetName": "AssetExisting"}])
 
     def test_create_vulnerability_old_dry_run(self):
         vuln = self.client.create_vulnerability_old(
@@ -287,6 +317,65 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIsInstance(resp.json(), dict)
         self.assertIn("[DRY RUN]", resp.text)
+
+    def test_upload_finding_evidence_dry_run(self):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(b"evidence")
+            evidence_path = tmp.name
+        try:
+            resp = self.client.upload_finding_evidence("vuln123", evidence_path)
+            self.assertIsInstance(resp, dict)
+        finally:
+            os.remove(evidence_path)
+
+    def test_upload_testcase_evidence_dry_run(self):
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(b"evidence")
+            evidence_path = tmp.name
+        try:
+            resp = self.client.upload_testcase_evidence("proj1", "tc1", evidence_path)
+            self.assertIsInstance(resp, dict)
+        finally:
+            os.remove(evidence_path)
+
+    def test_assign_findings_to_testcase_merges(self):
+        captured = {}
+
+        def fake_update(project_id, testcase_id, update_fields):
+            captured["payload"] = update_fields
+
+            return {"updated": True, "project_id": project_id, "testcase_id": testcase_id}
+        self.client.update_testcase = fake_update
+        result = self.client.assign_findings_to_testcase(
+            "proj1",
+            "tc1",
+            ["vulnA", "vulnB"],
+            existing_linked_vulnerabilities=["vulnB", "vulnC"]
+        )
+        self.assertIsInstance(result, dict)
+        linked = captured["payload"].get("linked_vulnerabilities", [])
+        self.assertListEqual(linked, ["vulnB", "vulnC", "vulnA"])
+
+    def test_add_note_to_finding_deduplicates(self):
+        self.client.get_vulnerability = lambda vid: {
+            "vulnerability_notes": [{"note": "Existing note", "type": "PLAINTEXT"}]
+        }
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+            def json(self):
+                return {"ok": True}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["json_data"] = json_data
+            return Resp()
+        self.client._request = fake_request
+        result = self.client.add_note_to_finding("vuln123", "Existing note")
+        self.assertIsInstance(result, dict)
+        notes = captured["json_data"].get("notes", [])
+        self.assertEqual(len(notes), 1)
 
 
 if __name__ == "__main__":

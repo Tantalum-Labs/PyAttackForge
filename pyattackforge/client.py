@@ -13,6 +13,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import os
 import requests
 import logging
 from datetime import datetime, timezone, timedelta
@@ -214,6 +215,220 @@ class PyAttackForgeClient:
         else:
             return []
 
+    def get_vulnerability(self, vulnerability_id: str) -> Dict[str, Any]:
+        """
+        Retrieve a single vulnerability by ID.
+
+        Args:
+            vulnerability_id (str): The vulnerability ID.
+
+        Returns:
+            dict: Vulnerability details.
+        """
+        if not vulnerability_id:
+            raise ValueError("Missing required field: vulnerability_id")
+        resp = self._request("get", f"/api/ss/vulnerability/{vulnerability_id}")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch vulnerability: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "vulnerability" in data:
+            return data["vulnerability"]
+        return data
+
+    def add_note_to_finding(
+        self,
+        vulnerability_id: str,
+        note: Any,
+        note_type: str = "PLAINTEXT"
+    ) -> Dict[str, Any]:
+        """
+        Append a note to an existing finding.
+
+        Args:
+            vulnerability_id (str): The vulnerability ID.
+            note (str or dict): Note text or note object with a 'note' key.
+            note_type (str): Note type when passing a plain string (default: "PLAINTEXT").
+
+        Returns:
+            dict: API response.
+        """
+        if not vulnerability_id:
+            raise ValueError("Missing required field: vulnerability_id")
+        if note is None or note == "":
+            raise ValueError("Missing required field: note")
+        if isinstance(note, dict):
+            note_text = note.get("note")
+            note_entry = note
+        else:
+            note_text = str(note)
+            note_entry = {"note": note_text, "type": note_type}
+        if not note_text:
+            raise ValueError("Note text cannot be empty")
+        try:
+            vuln = self.get_vulnerability(vulnerability_id)
+            existing_notes = (
+                vuln.get("vulnerability_notes")
+                or vuln.get("notes")
+                or []
+            ) if isinstance(vuln, dict) else []
+        except Exception as exc:  # pragma: no cover - best-effort fetch
+            logger.warning(
+                "Unable to fetch existing vulnerability notes; proceeding with provided note only: %s",
+                exc
+            )
+            existing_notes = []
+        collected_notes = []
+        note_texts = set()
+        for n in existing_notes:
+            if isinstance(n, dict) and "note" in n:
+                if n["note"] in note_texts:
+                    continue
+                collected_notes.append(n)
+                note_texts.add(n["note"])
+        if note_entry.get("note") not in note_texts:
+            collected_notes.append(note_entry)
+        payload = {"notes": collected_notes}
+        resp = self._request("put", f"/api/ss/vulnerability/{vulnerability_id}", json_data=payload)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to add note: {resp.text}")
+        return resp.json()
+
+    def upload_finding_evidence(self, vulnerability_id: str, file_path: str) -> Dict[str, Any]:
+        """
+        Upload evidence to a finding/vulnerability.
+
+        Args:
+            vulnerability_id (str): The vulnerability ID.
+            file_path (str): Path to the evidence file.
+
+        Returns:
+            dict: API response.
+        """
+        if not vulnerability_id:
+            raise ValueError("Missing required field: vulnerability_id")
+        if not file_path:
+            raise ValueError("Missing required field: file_path")
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"Evidence file not found: {file_path}")
+        endpoint = f"/api/ss/vulnerability/{vulnerability_id}/evidence"
+        if self.dry_run:
+            resp = self._request("post", endpoint)
+            return resp.json()
+        with open(file_path, "rb") as evidence:
+            resp = self._request(
+                "post",
+                endpoint,
+                files={"file": (os.path.basename(file_path), evidence)}
+            )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Evidence upload failed: {resp.text}")
+        return resp.json()
+
+    def upload_testcase_evidence(
+        self,
+        project_id: str,
+        testcase_id: str,
+        file_path: str
+    ) -> Dict[str, Any]:
+        """
+        Upload evidence to a testcase.
+
+        Args:
+            project_id (str): The project ID.
+            testcase_id (str): The testcase ID.
+            file_path (str): Path to the evidence file.
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase_id:
+            raise ValueError("Missing required field: testcase_id")
+        if not file_path:
+            raise ValueError("Missing required field: file_path")
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"Evidence file not found: {file_path}")
+        endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}/file"
+        if self.dry_run:
+            resp = self._request("post", endpoint)
+            return resp.json()
+        with open(file_path, "rb") as evidence:
+            resp = self._request(
+                "post",
+                endpoint,
+                files={"file": (os.path.basename(file_path), evidence)}
+            )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Testcase evidence upload failed: {resp.text}")
+        return resp.json()
+
+    def assign_findings_to_testcase(
+        self,
+        project_id: str,
+        testcase_id: str,
+        vulnerability_ids: List[str],
+        existing_linked_vulnerabilities: Optional[List[str]] = None,
+        additional_fields: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Assign one or more findings to a testcase.
+
+        Args:
+            project_id (str): The project ID.
+            testcase_id (str): The testcase ID.
+            vulnerability_ids (list): List of vulnerability IDs to assign.
+            existing_linked_vulnerabilities (list, optional): Existing linked vulnerability IDs to merge with.
+            additional_fields (dict, optional): Additional testcase fields to include (e.g., status, tags).
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase_id:
+            raise ValueError("Missing required field: testcase_id")
+        if not vulnerability_ids:
+            raise ValueError("vulnerability_ids must contain at least one ID")
+        payload = additional_fields.copy() if additional_fields else {}
+        merged_ids = []
+        seen = set()
+        for vid in (existing_linked_vulnerabilities or []) + vulnerability_ids:
+            if vid and vid not in seen:
+                merged_ids.append(vid)
+                seen.add(vid)
+        payload["linked_vulnerabilities"] = merged_ids
+        return self.update_testcase(project_id, testcase_id, payload)
+
+    def update_testcase(
+        self,
+        project_id: str,
+        testcase_id: str,
+        update_fields: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update a testcase with the provided fields.
+
+        Args:
+            project_id (str): The project ID.
+            testcase_id (str): The testcase ID.
+            update_fields (dict): Fields to update (e.g., linked_vulnerabilities, details).
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase_id:
+            raise ValueError("Missing required field: testcase_id")
+        if not update_fields:
+            raise ValueError("update_fields cannot be empty")
+        endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}"
+        resp = self._request("put", endpoint, json_data=update_fields)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to update testcase: {resp.text}")
+        return resp.json()
+
     def __init__(self, api_key: str, base_url: str = "https://demo.attackforge.com", dry_run: bool = False):
         """
         Initialize the PyAttackForgeClient.
@@ -282,7 +497,10 @@ class PyAttackForgeClient:
         method: str,
         endpoint: str,
         json_data: Optional[Dict[str, Any]] = None,
-        params: Optional[Dict[str, Any]] = None
+        params: Optional[Dict[str, Any]] = None,
+        files: Optional[Dict[str, Any]] = None,
+        data: Optional[Dict[str, Any]] = None,
+        headers_override: Optional[Dict[str, str]] = None
     ) -> Any:
         url = f"{self.base_url}{endpoint}"
         if self.dry_run:
@@ -291,8 +509,25 @@ class PyAttackForgeClient:
                 logger.info("Payload: %s", json_data)
             if params:
                 logger.info("Params: %s", params)
+            if files:
+                logger.info("Files: %s", list(files.keys()))
+            if data:
+                logger.info("Data: %s", data)
             return DummyResponse()
-        return requests.request(method, url, headers=self.headers, json=json_data, params=params)
+        headers = self.headers.copy()
+        if files:
+            headers.pop("Content-Type", None)
+        if headers_override:
+            headers.update(headers_override)
+        return requests.request(
+            method,
+            url,
+            headers=headers,
+            json=json_data,
+            params=params,
+            files=files,
+            data=data
+        )
 
     def get_assets(self) -> Dict[str, Dict[str, Any]]:
         if self._asset_cache is None:
@@ -466,6 +701,7 @@ class PyAttackForgeClient:
         attack_scenario: str,
         remediation_recommendation: str,
         steps_to_reproduce: str,
+        writeup_id: Optional[str] = None,
         tags: Optional[list] = None,
         notes: Optional[list] = None,
         is_zeroday: bool = False,
@@ -491,6 +727,7 @@ class PyAttackForgeClient:
             attack_scenario (str): Attack scenario details.
             remediation_recommendation (str): Remediation recommendation.
             steps_to_reproduce (str): Steps to reproduce the finding.
+            writeup_id (str, optional): Existing writeup/library reference ID to use directly.
             tags (list, optional): List of tags.
             notes (list, optional): List of notes.
             is_zeroday (bool, optional): Whether this is a zero-day finding.
@@ -522,31 +759,6 @@ class PyAttackForgeClient:
         if missing_in_scope:
             self.update_project_scope(project_id, missing_in_scope)
 
-        # Fetch and cache all writeups
-        self.get_all_writeups()
-        # Find the reference_id for the writeup titled 'title' in the 'Main Vulnerabilities'
-        writeup_id = self.find_writeup_in_cache(title, "Main Vulnerabilities")
-        if not writeup_id:
-            writeup_fields = writeup_custom_fields[:] if writeup_custom_fields else []
-            if import_source:
-                writeup_fields.append({"key": "import_source", "value": import_source})
-            self.create_writeup(
-                title=title,
-                description=description,
-                remediation_recommendation=remediation_recommendation,
-                attack_scenario=attack_scenario,
-                custom_fields=writeup_fields
-            )
-            # Refresh the cache and search again
-            self.get_all_writeups(force_refresh=True)
-            writeup_id = self.find_writeup_in_cache(
-                title, "Main Vulnerabilities"
-            )
-            if not writeup_id:
-                raise RuntimeError(
-                    "Writeup creation failed: missing reference_id"
-                )
-
         finding_payload = {
             "affected_assets": [{"assetName": n} for n in asset_names],
             "likelihood_of_exploitation": likelihood_of_exploitation,
@@ -564,9 +776,33 @@ class PyAttackForgeClient:
         if notes:
             finding_payload["notes"] = notes
         finding_payload = {k: v for k, v in finding_payload.items() if v is not None}
+        resolved_writeup_id = writeup_id
+        if not resolved_writeup_id:
+            self.get_all_writeups()
+            resolved_writeup_id = self.find_writeup_in_cache(title, "Main Vulnerabilities")
+            if not resolved_writeup_id:
+                writeup_fields = writeup_custom_fields[:] if writeup_custom_fields else []
+                if import_source:
+                    writeup_fields.append({"key": "import_source", "value": import_source})
+                self.create_writeup(
+                    title=title,
+                    description=description,
+                    remediation_recommendation=remediation_recommendation,
+                    attack_scenario=attack_scenario,
+                    custom_fields=writeup_fields
+                )
+                # Refresh the cache and search again
+                self.get_all_writeups(force_refresh=True)
+                resolved_writeup_id = self.find_writeup_in_cache(
+                    title, "Main Vulnerabilities"
+                )
+                if not resolved_writeup_id:
+                    raise RuntimeError(
+                        "Writeup creation failed: missing reference_id"
+                    )
         result = self.create_finding_from_writeup(
             project_id=project_id,
-            writeup_id=writeup_id,
+            writeup_id=resolved_writeup_id,
             priority=priority,
             **finding_payload
         )
