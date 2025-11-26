@@ -139,7 +139,7 @@ client.add_note_to_testcase(
 )
 ```
 
-Associate findings to a testcase (overwrites existing):
+Associate findings to a testcase:
 ```python
 client.assign_findings_to_testcase(
     project_id="abc123",
@@ -160,6 +160,11 @@ client.link_vulnerability_to_testcases(
 Fetch project testcases:
 ```python
 testcases = client.get_testcases("abc123")
+```
+
+Fetch a single testcase (if supported in your tenant):
+```python
+testcase = client.get_testcase("abc123", "5e8017d2e1385f0c58e8f4f8")
 ```
 
 Merge and add findings to a testcase in one call:

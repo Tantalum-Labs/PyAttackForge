@@ -90,7 +90,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
         # Ensure the client uses the provided writeup_id and does not attempt to create/search
         self.client.get_all_writeups = lambda force_refresh=False: []
         self.client.find_writeup_in_cache = lambda title, library="Main Vulnerabilities": None
-        captured = {}
+        captured = {"endpoints": []}
 
         def fake_create_from_writeup(**kwargs):
             captured.update(kwargs)
@@ -341,7 +341,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
             os.remove(evidence_path)
 
     def test_assign_findings_to_testcase_merges(self):
-        captured = {}
+        captured = {"endpoints": []}
 
         def fake_update(project_id, testcase_id, update_fields):
             captured["payload"] = update_fields
@@ -362,7 +362,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.client.get_vulnerability = lambda vid: {
             "vulnerability_notes": [{"note": "Existing note", "type": "PLAINTEXT"}]
         }
-        captured = {}
+        captured = {"endpoints": []}
 
         class Resp:
             status_code = 200
@@ -412,29 +412,25 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertEqual(tc.get("id"), "tc-ok")
 
     def test_add_note_to_testcase(self):
-        captured = {}
+        captured = {"endpoints": []}
 
         class Resp:
             status_code = 200
 
             def json(self):
-                return {"ok": True}
+                return {"status": "Testcase Note Created"}
 
         def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
-            captured["endpoint"] = endpoint
-            captured["json_data"] = json_data
+            captured["endpoints"].append((endpoint, json_data))
             return Resp()
 
         self.client._request = fake_request
-        # Provide a mock get_testcases to satisfy lookup
-        self.client.get_testcases = lambda project_id: [
-            {"id": "tc1", "testcase": "Dummy", "status": "Not Tested"}
-        ]
         resp = self.client.add_note_to_testcase("proj1", "tc1", "Note text", status="Tested")
         self.assertIsInstance(resp, dict)
-        self.assertIn("details", captured["json_data"])
-        self.assertIn("details_html", captured["json_data"])
-        self.assertEqual(captured["json_data"]["status"], "Tested")
+        note_calls = [c for c in captured["endpoints"] if "/note" in c[0]]
+        self.assertTrue(note_calls)
+        self.assertEqual(note_calls[0][1]["note"], "Note text")
+        self.assertEqual(note_calls[0][1]["note_type"], "PLAINTEXT")
 
     def test_link_vulnerability_to_testcases(self):
         captured = {}

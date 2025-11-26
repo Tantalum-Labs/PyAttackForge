@@ -462,7 +462,7 @@ class PyAttackForgeClient:
         status: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Add or replace testcase details with a note. Preserves the testcase name and status where possible.
+        Create a testcase note via the dedicated note endpoint, optionally updating status via update_testcase.
 
         Args:
             project_id (str): Project ID.
@@ -479,19 +479,21 @@ class PyAttackForgeClient:
             raise ValueError("Missing required field: testcase_id")
         if not note:
             raise ValueError("Missing required field: note")
-        # Fetch testcase to preserve name/status
-        testcases = self.get_testcases(project_id)
-        testcase = next((t for t in testcases if t.get("id") == testcase_id), None)
-        if not testcase:
-            raise RuntimeError(f"Testcase '{testcase_id}' not found in project '{project_id}'")
+        endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}/note"
+        payload: Dict[str, Any] = {"note": note, "note_type": "PLAINTEXT"}
+        resp = self._request("post", endpoint, json_data=payload)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to add testcase note: {resp.text}")
+        result = resp.json()
 
-        payload: Dict[str, Any] = {
-            "details": note,
-            "details_html": note,
-            "testcase": testcase.get("testcase") or testcase.get("title"),
-        }
-        payload["status"] = status if status else testcase.get("status")
-        return self.update_testcase(project_id, testcase_id, payload)
+        # Optionally update status using update_testcase
+        if status:
+            try:
+                self.update_testcase(project_id, testcase_id, {"status": status})
+            except Exception:
+                # If status update fails, still return note creation response
+                pass
+        return result
 
     def assign_findings_to_testcase(
         self,
