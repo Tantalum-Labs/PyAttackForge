@@ -158,6 +158,33 @@ class TestPyAttackForgeClient(unittest.TestCase):
         findings = self.client.get_findings_for_project("dummy_project")
         self.assertIsInstance(findings, list)
 
+    def test_get_findings_with_pagination(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"vulnerabilities": [{"id": i} for i in range(10)]}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["params"] = params
+            captured["endpoint"] = endpoint
+            return Resp()
+
+        self.client._request = fake_request
+        findings = self.client.get_findings("proj1", page=2, limit=3, priority="High")
+        self.assertEqual(len(findings), 3)
+        self.assertEqual(findings[0]["id"], 3)
+        self.assertEqual(captured["params"]["priority"], "High")
+        self.assertEqual(captured["params"]["skip"], 3)
+        self.assertEqual(captured["params"]["limit"], 3)
+        self.assertEqual(captured["params"]["page"], 2)
+        self.assertEqual(captured["endpoint"], "/api/ss/project/proj1/vulnerabilities")
+        with self.assertRaises(ValueError):
+            self.client.get_findings("proj1", page=0)
+
     def test_upsert_finding_for_project_create(self):
         # Simulate no existing findings (should create new)
         self.client.get_findings_for_project = lambda project_id: []
@@ -379,6 +406,42 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertIsInstance(result, dict)
         notes = captured["json_data"].get("notes", [])
         self.assertEqual(len(notes), 1)
+
+    def test_update_finding(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"updated": True}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            captured["json_data"] = json_data
+            return Resp()
+
+        self.client._request = fake_request
+        resp = self.client.update_finding(
+            vulnerability_id="v-1",
+            project_id="p-1",
+            affected_assets=[{"name": "asset-a"}, {"assetName": "asset-b"}, "asset-c"],
+            notes=[{"note": "n1", "type": "PLAINTEXT"}],
+            custom="field",
+        )
+        self.assertIsInstance(resp, dict)
+        payload = captured["json_data"]
+        self.assertEqual(payload["project_id"], "p-1")
+        self.assertEqual(
+            payload["affected_assets"],
+            [{"assetName": "asset-a"}, {"assetName": "asset-b"}, {"assetName": "asset-c"}],
+        )
+        self.assertEqual(payload["notes"], [{"note": "n1", "type": "PLAINTEXT"}])
+        self.assertEqual(payload["custom"], "field")
+        self.assertEqual(captured["endpoint"], "/api/ss/vulnerability/v-1")
+        with self.assertRaises(ValueError):
+            self.client.update_finding("", project_id="p-1")
 
     def test_get_testcases(self):
         # DummyResponse returns {}, so should yield an empty list without raising

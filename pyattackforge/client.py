@@ -198,6 +198,68 @@ class PyAttackForgeClient:
                 "result": result,
             }
 
+    def _list_project_findings(
+        self,
+        project_id: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Internal helper to fetch findings for a project with optional query params.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        resp = self._request(
+            "get",
+            f"/api/ss/project/{project_id}/vulnerabilities",
+            params=params or {},
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch findings: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "vulnerabilities" in data:
+            findings = data.get("vulnerabilities") or []
+        elif isinstance(data, list):
+            findings = data
+        else:
+            findings = []
+        return findings if isinstance(findings, list) else []
+
+    def get_findings(
+        self,
+        project_id: str,
+        page: int = 1,
+        limit: int = 100,
+        priority: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Backwards-compatible listing of findings with optional pagination.
+
+        Args:
+            project_id (str): The project ID.
+            page (int, optional): 1-based page number. Defaults to 1.
+            limit (int, optional): Page size. Defaults to 100.
+            priority (str, optional): Filter by priority.
+
+        Returns:
+            list: Page of finding/vulnerability dicts.
+        """
+        if page < 1:
+            raise ValueError("page must be >= 1")
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+        params: Dict[str, Any] = {
+            "skip": (page - 1) * limit,
+            "limit": limit,
+            "page": page,
+        }
+        if priority:
+            params["priority"] = priority
+        findings = self._list_project_findings(project_id, params=params)
+        if len(findings) > limit:
+            start = (page - 1) * limit
+            findings = findings[start:start + limit]
+        return findings
+
     def get_findings_for_project(self, project_id: str, priority: Optional[str] = None) -> list:
         """
         Fetch all findings/vulnerabilities for a given project.
@@ -209,20 +271,8 @@ class PyAttackForgeClient:
         Returns:
             list: List of finding/vulnerability dicts.
         """
-        params = {}
-        if priority:
-            params["priority"] = priority
-        resp = self._request("get", f"/api/ss/project/{project_id}/vulnerabilities", params=params)
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch findings: {resp.text}")
-        # The response may have a "vulnerabilities" key or be a list directly
-        data = resp.json()
-        if isinstance(data, dict) and "vulnerabilities" in data:
-            return data["vulnerabilities"]
-        elif isinstance(data, list):
-            return data
-        else:
-            return []
+        params = {"priority": priority} if priority else None
+        return self._list_project_findings(project_id, params=params)
 
     def get_vulnerability(self, vulnerability_id: str) -> Dict[str, Any]:
         """
@@ -243,6 +293,50 @@ class PyAttackForgeClient:
         if isinstance(data, dict) and "vulnerability" in data:
             return data["vulnerability"]
         return data
+
+    def update_finding(
+        self,
+        vulnerability_id: str,
+        project_id: Optional[str] = None,
+        affected_assets: Optional[list] = None,
+        notes: Optional[list] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Update an existing finding/vulnerability with the provided fields.
+
+        Args:
+            vulnerability_id (str): The vulnerability ID to update.
+            project_id (str, optional): Project ID when required by the API.
+            affected_assets (list, optional): List of asset names or dicts with 'name'/'assetName'.
+            notes (list, optional): Notes payload to set.
+            **kwargs: Any additional fields accepted by the AttackForge API.
+
+        Returns:
+            dict: API response body.
+        """
+        if not vulnerability_id:
+            raise ValueError("Missing required field: vulnerability_id")
+        payload: Dict[str, Any] = {}
+        if project_id:
+            payload["project_id"] = project_id
+        if affected_assets is not None:
+            asset_names = [
+                a.get("assetName") if isinstance(a, dict) and "assetName" in a
+                else a.get("name") if isinstance(a, dict) and "name" in a
+                else a
+                for a in affected_assets
+            ]
+            payload["affected_assets"] = [{"assetName": n} for n in asset_names if n]
+        if notes is not None:
+            payload["notes"] = notes
+        for key, value in (kwargs or {}).items():
+            if value is not None:
+                payload[key] = value
+        resp = self._request("put", f"/api/ss/vulnerability/{vulnerability_id}", json_data=payload)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to update finding: {resp.text}")
+        return resp.json()
 
     def add_note_to_finding(
         self,

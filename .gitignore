@@ -211,3 +211,4 @@ test*.py
 attackforgePushShodan.py
 pyattackforge.json
 scripts/
+attackforgePush.py
