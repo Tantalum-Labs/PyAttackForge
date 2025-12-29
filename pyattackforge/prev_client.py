@@ -47,7 +47,7 @@ class PyAttackForgeClient:
         }
         self.dry_run = dry_run
         self._asset_cache = None
-        self._project_scope_cache = {}  # {project_id: set(asset_names)}
+        self._project_scope_cache = {}
 
     def _request(
         self,
@@ -128,7 +128,7 @@ class PyAttackForgeClient:
         resp = self._request("post", "/api/ss/library/asset", json_data=asset_data)
         if resp.status_code in (200, 201):
             asset = resp.json()
-            self._asset_cache = None  # Invalidate cache
+            self._asset_cache = None
             return asset
         if "Asset Already Exists" in resp.text:
             return self.get_asset_by_name(asset_data["name"])
@@ -310,7 +310,6 @@ class PyAttackForgeClient:
             ValueError: If any required field is missing.
             RuntimeError: If vulnerability creation fails.
         """
-        # Validate required fields
         required_fields = [
             ("project_id", project_id),
             ("title", title),
@@ -346,11 +345,9 @@ class PyAttackForgeClient:
             "linked_testcases": linked_testcases or [],
             "custom_tags": custom_tags or [],
         }
-        # Only include notes if it is a non-empty list
         if notes:
             payload["notes"] = notes
 
-        # Remove None values (for optional fields)
         payload = {k: v for k, v in payload.items() if v is not None}
 
         resp = self._request("post", "/api/ss/vulnerability", json_data=payload)

@@ -31,7 +31,7 @@ class PyAttackForgeClient:
     Supports dry-run mode for testing without making real API calls.
     """
 
-    def upsert_finding_for_project(  # noqa: C901
+    def upsert_finding_for_project(
         self,
         project_id: str,
         title: str,
@@ -83,19 +83,12 @@ class PyAttackForgeClient:
         Returns:
             dict: The created or updated finding.
         """
-        # Ensure all assets exist before proceeding
         asset_names = []
         for asset in affected_assets:
             name = asset["name"] if isinstance(asset, dict) and "name" in asset else asset
             self.get_asset_by_name(name)
-            # if not asset_obj:
-            #     try:
-            #         asset_obj = self.create_asset({"name": name})
-            #     except Exception as e:
-            #         raise RuntimeError(f"Asset '{name}' does not exist and could not be created: {e}")
             asset_names.append(name)
 
-        # Fetch all findings for the project
         findings = self.get_findings_for_project(project_id)
         logger.debug(
             "Found %s findings for project %s",
@@ -117,11 +110,9 @@ class PyAttackForgeClient:
                 break
 
         if match:
-            # Update the existing finding: append assets and notes if not present
             updated_assets = set()
             if "vulnerability_affected_assets" in match:
                 for asset in match["vulnerability_affected_assets"]:
-                    # Handle nested asset structure from API
                     if isinstance(asset, dict):
                         if "asset" in asset and isinstance(asset["asset"], dict) and "name" in asset["asset"]:
                             updated_assets.add(asset["asset"]["name"])
@@ -132,10 +123,8 @@ class PyAttackForgeClient:
             elif "vulnerability_affected_asset_name" in match:
                 updated_assets.add(match["vulnerability_affected_asset_name"])
             updated_assets.update(asset_names)
-            # Append notes
             existing_notes = match.get("vulnerability_notes", [])
             new_notes = notes or []
-            # Avoid duplicate notes
             note_texts = {n["note"] for n in existing_notes if "note" in n}
             for n in new_notes:
                 if isinstance(n, dict) and "note" in n:
@@ -146,13 +135,11 @@ class PyAttackForgeClient:
                     if n not in note_texts:
                         existing_notes.append({"note": n, "type": "PLAINTEXT"})
                         note_texts.add(n)
-            # Prepare update payload
             update_payload = {
                 "affected_assets": [{"assetName": n} for n in updated_assets],
                 "notes": existing_notes,
                 "project_id": project_id,
             }
-            # Actually update the finding in the backend
             resp = self._request("put", f"/api/ss/vulnerability/{match['vulnerability_id']}", json_data=update_payload)
             if resp.status_code not in (200, 201):
                 raise RuntimeError(f"Failed to update finding: {resp.text}")
@@ -163,8 +150,6 @@ class PyAttackForgeClient:
                 "api_response": resp.json(),
             }
         else:
-            # No match, create a new finding
-            # Ensure all asset payloads use 'assetName'
             assets_payload = []
             for asset in affected_assets:
                 if isinstance(asset, dict) and "name" in asset:
@@ -374,7 +359,7 @@ class PyAttackForgeClient:
                 or vuln.get("notes")
                 or []
             ) if isinstance(vuln, dict) else []
-        except Exception as exc:  # pragma: no cover - best-effort fetch
+        except Exception as exc:
             logger.warning(
                 "Unable to fetch existing vulnerability notes; proceeding with provided note only: %s",
                 exc
@@ -580,12 +565,10 @@ class PyAttackForgeClient:
             raise RuntimeError(f"Failed to add testcase note: {resp.text}")
         result = resp.json()
 
-        # Optionally update status using update_testcase
         if status:
             try:
                 self.update_testcase(project_id, testcase_id, {"status": status})
             except Exception:
-                # If status update fails, still return note creation response
                 pass
         return result
 
@@ -702,6 +685,562 @@ class PyAttackForgeClient:
             additional_fields=additional_fields,
         )
 
+    def create_user(
+        self,
+        first_name: str,
+        last_name: str,
+        username: str,
+        email: str,
+        password: str,
+        role: str,
+        mfa: str,
+    ) -> Dict[str, Any]:
+        """
+        Create a new user in AttackForge.
+
+        Args:
+            first_name (str): First name of the user.
+            last_name (str): Last name of the user.
+            username (str): Username for the user (email if SSO is disabled).
+            email (str): Email address of the user.
+            password (str): User password (min 15 characters per API docs).
+            role (str): Role for the user (admin, librarymod, client, consultant, projectoperator).
+            mfa (str): MFA setting ("Yes" or "No").
+
+        Returns:
+            dict: Created user details.
+        """
+        required_fields = [
+            ("first_name", first_name),
+            ("last_name", last_name),
+            ("username", username),
+            ("email", email),
+            ("password", password),
+            ("role", role),
+            ("mfa", mfa),
+        ]
+        for field_name, value in required_fields:
+            if value is None or value == "":
+                raise ValueError(f"Missing required field: {field_name}")
+        payload = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "username": username,
+            "email": email,
+            "password": password,
+            "role": role,
+            "mfa": mfa,
+        }
+        resp = self._request("post", "/api/ss/user", json_data=payload)
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            if isinstance(data, dict) and "user" in data:
+                return data["user"]
+            return data
+        raise RuntimeError(f"User creation failed: {resp.text}")
+
+    def create_users(self, users: List[Dict[str, Any]]) -> Any:
+        """
+        Create multiple users in AttackForge.
+
+        Args:
+            users (list): List of user payloads.
+
+        Returns:
+            object: API response body.
+        """
+        if not users:
+            raise ValueError("users must contain at least one user payload")
+        resp = self._request("post", "/api/ss/users", json_data=users)
+        if resp.status_code in (200, 201):
+            return resp.json()
+        raise RuntimeError(f"Bulk user creation failed: {resp.text}")
+
+    def get_user(self, user_id: str) -> Dict[str, Any]:
+        """
+        Retrieve a user by ID.
+
+        Args:
+            user_id (str): User ID.
+
+        Returns:
+            dict: User details.
+        """
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        resp = self._request("get", f"/api/ss/users/{user_id}")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch user: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "user" in data:
+            return data["user"]
+        return data
+
+    def get_user_by_email(self, email: str) -> Dict[str, Any]:
+        """
+        Retrieve a user by email address.
+
+        Args:
+            email (str): Email address to look up.
+
+        Returns:
+            dict: User details.
+        """
+        if not email:
+            raise ValueError("Missing required field: email")
+        email_value = requests.utils.quote(email, safe="")
+        resp = self._request("get", f"/api/ss/users/email/{email_value}")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch user by email: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "user" in data:
+            return data["user"]
+        return data
+
+    def get_user_by_username(self, username: str) -> Dict[str, Any]:
+        """
+        Retrieve a user by username.
+
+        Args:
+            username (str): Username to look up.
+
+        Returns:
+            dict: User details.
+        """
+        if not username:
+            raise ValueError("Missing required field: username")
+        username_value = requests.utils.quote(username, safe="")
+        resp = self._request("get", f"/api/ss/users/username/{username_value}")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch user by username: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "user" in data:
+            return data["user"]
+        return data
+
+    def get_users(
+        self,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        email: Optional[str] = None,
+        username: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve users, optionally filtered by name or identifier.
+
+        Args:
+            first_name (str, optional): Filter by first name.
+            last_name (str, optional): Filter by last name.
+            email (str, optional): Filter by email address.
+            username (str, optional): Filter by username.
+
+        Returns:
+            list: List of user dicts.
+        """
+        params: Dict[str, Any] = {}
+        if first_name:
+            params["firstName"] = first_name
+        if last_name:
+            params["lastName"] = last_name
+        if email:
+            params["email"] = email
+        if username:
+            params["username"] = username
+        resp = self._request("get", "/api/ss/users", params=params or None)
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch users: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "users" in data:
+            return data.get("users", [])
+        if isinstance(data, list):
+            return data
+        return []
+
+    def update_user(
+        self,
+        user_id: str,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        email_address: Optional[str] = None,
+        username: Optional[str] = None,
+        is_deleted: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update a user's profile fields.
+
+        Args:
+            user_id (str): User ID.
+            first_name (str, optional): First name.
+            last_name (str, optional): Last name.
+            email_address (str, optional): Email address.
+            username (str, optional): Username.
+            is_deleted (bool, optional): Mark user deleted.
+
+        Returns:
+            dict: Updated user details.
+        """
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        payload: Dict[str, Any] = {}
+        if first_name is not None:
+            payload["first_name"] = first_name
+        if last_name is not None:
+            payload["last_name"] = last_name
+        if email_address is not None:
+            payload["email_address"] = email_address
+        if username is not None:
+            payload["username"] = username
+        if is_deleted is not None:
+            payload["is_deleted"] = is_deleted
+        if not payload:
+            raise ValueError("No update fields provided for user")
+        resp = self._request("put", f"/api/ss/user/{user_id}", json_data=payload)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to update user: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "user" in data:
+            return data["user"]
+        return data
+
+    def activate_user(self, user_id: str) -> Dict[str, Any]:
+        """
+        Activate a user.
+
+        Args:
+            user_id (str): User ID.
+
+        Returns:
+            dict: API response.
+        """
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        resp = self._request("put", f"/api/ss/user/{user_id}/activate")
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to activate user: {resp.text}")
+        return resp.json()
+
+    def deactivate_user(self, user_id: str) -> Dict[str, Any]:
+        """
+        Deactivate a user.
+
+        Args:
+            user_id (str): User ID.
+
+        Returns:
+            dict: API response.
+        """
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        resp = self._request("put", f"/api/ss/user/{user_id}/deactivate")
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to deactivate user: {resp.text}")
+        return resp.json()
+
+    def add_user_to_group(
+        self,
+        group_id: str,
+        user_id: str,
+        access_level: str,
+    ) -> Dict[str, Any]:
+        """
+        Add a user to a group with a default access level.
+
+        Args:
+            group_id (str): Group ID.
+            user_id (str): User ID.
+            access_level (str): View, Upload, or Edit.
+
+        Returns:
+            dict: API response.
+        """
+        if not group_id:
+            raise ValueError("Missing required field: group_id")
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        if not access_level:
+            raise ValueError("Missing required field: access_level")
+        payload = {
+            "group_id": group_id,
+            "user_id": user_id,
+            "access_level": access_level,
+        }
+        resp = self._request("post", "/api/ss/group/user", json_data=payload)
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to add user to group: {resp.text}")
+        return resp.json()
+
+    def update_user_access_on_group(
+        self,
+        group_id: str,
+        user_id: str,
+        access_level: str,
+    ) -> Dict[str, Any]:
+        """
+        Update a user's access on a group.
+
+        Args:
+            group_id (str): Group ID.
+            user_id (str): User ID.
+            access_level (str): View, Upload, Edit, or Delete.
+
+        Returns:
+            dict: API response.
+        """
+        if not group_id:
+            raise ValueError("Missing required field: group_id")
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        if not access_level:
+            raise ValueError("Missing required field: access_level")
+        payload = {
+            "group_id": group_id,
+            "user_id": user_id,
+            "access_level": access_level,
+        }
+        resp = self._request(
+            "put",
+            f"/api/ss/group/user/{user_id}",
+            json_data=payload,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to update user access on group: {resp.text}")
+        return resp.json()
+
+    def update_user_access_on_project(
+        self,
+        project_id: str,
+        user_id: str,
+        update_action: str,
+    ) -> Dict[str, Any]:
+        """
+        Update a user's access on a project.
+
+        Args:
+            project_id (str): Project ID.
+            user_id (str): User ID.
+            update_action (str): View, Upload, Edit, Delete, or Restore.
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        if not update_action:
+            raise ValueError("Missing required field: update_action")
+        payload = {"update": update_action}
+        resp = self._request(
+            "put",
+            f"/api/ss/project/{project_id}/access/{user_id}",
+            json_data=payload,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to update user access on project: {resp.text}")
+        return resp.json()
+
+    def invite_user_to_project(
+        self,
+        project_id: str,
+        username: str,
+        access_level: str,
+        role: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Invite a single user to a project.
+
+        Args:
+            project_id (str): Project ID.
+            username (str): Username or email address.
+            access_level (str): View, Upload, or Edit.
+            role (str, optional): Collaboration role.
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not username:
+            raise ValueError("Missing required field: username")
+        if not access_level:
+            raise ValueError("Missing required field: access_level")
+        payload: Dict[str, Any] = {
+            "id": project_id,
+            "username": username,
+            "accessLevel": access_level,
+        }
+        if role is not None:
+            payload["role"] = role
+        resp = self._request(
+            "post",
+            f"/api/ss/project/{project_id}/invite",
+            json_data=payload,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to invite user to project: {resp.text}")
+        return resp.json()
+
+    def invite_users_to_project_team(
+        self,
+        project_id: str,
+        users: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Invite multiple users to a project team.
+
+        Args:
+            project_id (str): Project ID.
+            users (list): List of user invite payloads.
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not users:
+            raise ValueError("users must contain at least one user payload")
+        payload = {"users": users}
+        resp = self._request(
+            "post",
+            f"/api/ss/project/{project_id}/team/invite",
+            json_data=payload,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to invite users to project: {resp.text}")
+        return resp.json()
+
+    def get_user_groups(self, user_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve groups for a user.
+
+        Args:
+            user_id (str): User ID.
+
+        Returns:
+            list: List of group dicts.
+        """
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        resp = self._request("get", f"/api/ss/user/{user_id}/groups")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch user groups: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "groups" in data:
+            return data.get("groups", [])
+        if isinstance(data, list):
+            return data
+        return []
+
+    def get_user_projects(self, user_id: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve projects for a user.
+
+        Args:
+            user_id (str): User ID.
+
+        Returns:
+            list: List of project dicts.
+        """
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        resp = self._request("get", f"/api/ss/user/{user_id}/projects")
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch user projects: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "projects" in data:
+            return data.get("projects", [])
+        if isinstance(data, list):
+            return data
+        return []
+
+    def get_user_audit_logs(
+        self,
+        user_id: str,
+        skip: Optional[int] = None,
+        limit: Optional[int] = None,
+        include_request_body: Optional[bool] = None,
+        endpoint: Optional[str] = None,
+        method: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve audit logs for a user.
+
+        Args:
+            user_id (str): User ID.
+            skip (int, optional): Number of records to skip.
+            limit (int, optional): Max number of records to return.
+            include_request_body (bool, optional): Include request body in logs.
+            endpoint (str, optional): Filter logs by endpoint.
+            method (str, optional): Filter logs by HTTP method.
+
+        Returns:
+            list: List of audit log entries.
+        """
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        params: Dict[str, Any] = {}
+        if skip is not None:
+            params["skip"] = skip
+        if limit is not None:
+            params["limit"] = limit
+        if include_request_body is not None:
+            params["include_request_body"] = include_request_body
+        if endpoint is not None:
+            params["endpoint"] = endpoint
+        if method is not None:
+            params["method"] = method
+        resp = self._request(
+            "get",
+            f"/api/ss/user/{user_id}/auditlogs",
+            params=params or None,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch user audit logs: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "logs" in data:
+            return data.get("logs", [])
+        if isinstance(data, list):
+            return data
+        return []
+
+    def get_user_login_history(
+        self,
+        user_id: str,
+        skip: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve login history for a user.
+
+        Args:
+            user_id (str): User ID.
+            skip (int, optional): Number of records to skip.
+            limit (int, optional): Max number of records to return.
+
+        Returns:
+            list: List of login entries.
+        """
+        if not user_id:
+            raise ValueError("Missing required field: user_id")
+        params: Dict[str, Any] = {}
+        if skip is not None:
+            params["skip"] = skip
+        if limit is not None:
+            params["limit"] = limit
+        resp = self._request(
+            "get",
+            f"/api/ss/user/{user_id}/logins",
+            params=params or None,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Failed to fetch user login history: {resp.text}")
+        data = resp.json()
+        if isinstance(data, dict) and "logs" in data:
+            return data.get("logs", [])
+        if isinstance(data, list):
+            return data
+        return []
+
     def __init__(self, api_key: str, base_url: str = "https://demo.attackforge.com", dry_run: bool = False):
         """
         Initialize the PyAttackForgeClient.
@@ -719,8 +1258,8 @@ class PyAttackForgeClient:
         }
         self.dry_run = dry_run
         self._asset_cache = None
-        self._project_scope_cache = {}  # {project_id: set(asset_names)}
-        self._writeup_cache = None  # Cache for all writeups
+        self._project_scope_cache = {}
+        self._writeup_cache = None
 
     def get_all_writeups(self, force_refresh: bool = False) -> list:
         """
@@ -738,13 +1277,11 @@ class PyAttackForgeClient:
         if resp.status_code != 200:
             raise RuntimeError(f"Failed to fetch writeups: {resp.text}")
         data = resp.json()
-        # The endpoint may return a list or a dict with a key like "vulnerabilities"
         if isinstance(data, dict) and "vulnerabilities" in data:
             self._writeup_cache = data["vulnerabilities"]
         elif isinstance(data, list):
             self._writeup_cache = data
         else:
-            # fallback: try to treat as a list of writeups
             self._writeup_cache = data if isinstance(data, list) else []
         return self._writeup_cache
 
@@ -823,14 +1360,6 @@ class PyAttackForgeClient:
 
     def create_asset(self, asset_data: Dict[str, Any]) -> Dict[str, Any]:
         pass
-        # resp = self._request("post", "/api/ss/library/asset", json_data=asset_data)
-        # if resp.status_code in (200, 201):
-        #     asset = resp.json()
-        #     self._asset_cache = None  # Invalidate cache
-        #     return asset
-        # if "Asset Already Exists" in resp.text:
-        #     return self.get_asset_by_name(asset_data["name"])
-        # raise RuntimeError(f"Asset creation failed: {resp.text}")
 
     def get_project_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         params = {
@@ -1020,17 +1549,13 @@ class PyAttackForgeClient:
         Returns:
             dict: Created vulnerability details.
         """
-        # Ensure all assets exist and are in project scope
         asset_names = []
         for asset in affected_assets:
             name = asset["assetName"] if isinstance(asset, dict) and "assetName" in asset \
                 else asset["name"] if isinstance(asset, dict) and "name" in asset \
                 else asset
             self.get_asset_by_name(name)
-            # if not asset_obj:
-            #     asset_obj = self.create_asset({"name": name})
             asset_names.append(name)
-        # Ensure all assets are in project scope
         scope = self.get_project_scope(project_id)
         missing_in_scope = [n for n in asset_names if n not in scope]
         if missing_in_scope:
@@ -1068,7 +1593,6 @@ class PyAttackForgeClient:
                     attack_scenario=attack_scenario,
                     custom_fields=writeup_fields
                 )
-                # Refresh the cache and search again
                 self.get_all_writeups(force_refresh=True)
                 resolved_writeup_id = self.find_writeup_in_cache(
                     title, "Main Vulnerabilities"
@@ -1138,7 +1662,6 @@ class PyAttackForgeClient:
             ValueError: If any required field is missing.
             RuntimeError: If vulnerability creation fails.
         """
-        # Validate required fields
         required_fields = [
             ("project_id", project_id),
             ("title", title),

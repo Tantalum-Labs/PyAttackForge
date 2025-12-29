@@ -6,9 +6,7 @@ from pyattackforge import PyAttackForgeClient
 
 class TestPyAttackForgeClient(unittest.TestCase):
     def setUp(self):
-        # Use dummy values for dry-run mode
         self.client = PyAttackForgeClient(api_key="dummy", dry_run=True)
-        # Patch create_asset to return a dummy dict
         self.client.create_asset = lambda asset_data: {
             "name": asset_data.get("name", "DummyAsset")
         }
@@ -29,8 +27,37 @@ class TestPyAttackForgeClient(unittest.TestCase):
         project = self.client.create_project("TestProject")
         self.assertIsInstance(project, dict)
 
+    def test_create_user_dry_run(self):
+        user = self.client.create_user(
+            first_name="John",
+            last_name="Citizen",
+            username="john.citizen@attackforge.com",
+            email="john.citizen@attackforge.com",
+            password="ThisIsASuperLongPassword",
+            role="client",
+            mfa="Yes",
+        )
+        self.assertIsInstance(user, dict)
+
+    def test_create_users_dry_run(self):
+        users = self.client.create_users(
+            [
+                {
+                    "first_name": "Jane",
+                    "last_name": "Citizen",
+                    "username": "jane.citizen@attackforge.com",
+                    "email": "jane.citizen@attackforge.com",
+                    "password": "ThisIsASuperLongPassword",
+                    "role": "consultant",
+                    "mfa": "Yes",
+                }
+            ]
+        )
+        self.assertIsInstance(users, dict)
+        with self.assertRaises(ValueError):
+            self.client.create_users([])
+
     def test_create_vulnerability_dry_run(self):
-        # Patch get_all_writeups to return a matching writeup for this test
         self.client.get_all_writeups = (
             lambda force_refresh=False: [
                 {
@@ -55,7 +82,6 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertIsInstance(vuln, dict)
 
     def test_create_vulnerability_with_import_source_and_writeup_custom_fields(self):
-        # Patch get_all_writeups to return a matching writeup for this test
         self.client.get_all_writeups = (
             lambda force_refresh=False: [
                 {
@@ -87,7 +113,6 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertIsInstance(vuln, dict)
 
     def test_create_vulnerability_with_existing_writeup_id(self):
-        # Ensure the client uses the provided writeup_id and does not attempt to create/search
         self.client.get_all_writeups = lambda force_refresh=False: []
         self.client.find_writeup_in_cache = lambda title, library="Main Vulnerabilities": None
         captured = {"endpoints": []}
@@ -185,10 +210,311 @@ class TestPyAttackForgeClient(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.client.get_findings("proj1", page=0)
 
+    def test_get_user_by_id(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"user": {"id": "u1"}}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            return Resp()
+
+        self.client._request = fake_request
+        user = self.client.get_user("u1")
+        self.assertEqual(captured["endpoint"], "/api/ss/users/u1")
+        self.assertEqual(user.get("id"), "u1")
+
+    def test_get_user_by_email_encodes(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"user": {"id": "u2"}}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            return Resp()
+
+        self.client._request = fake_request
+        user = self.client.get_user_by_email("bruce.wayne@batman.com")
+        self.assertEqual(captured["endpoint"], "/api/ss/users/email/bruce.wayne%40batman.com")
+        self.assertEqual(user.get("id"), "u2")
+
+    def test_get_user_by_username_encodes(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"user": {"id": "u3"}}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            return Resp()
+
+        self.client._request = fake_request
+        user = self.client.get_user_by_username("bruce.wayne")
+        self.assertEqual(captured["endpoint"], "/api/ss/users/username/bruce.wayne")
+        self.assertEqual(user.get("id"), "u3")
+
+    def test_get_users_with_filters(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"users": [{"id": "u1"}]}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            captured["params"] = params
+            return Resp()
+
+        self.client._request = fake_request
+        users = self.client.get_users(
+            first_name="John",
+            last_name="Citizen",
+            email="john.citizen@attackforge.com",
+            username="john.citizen@attackforge.com",
+        )
+        self.assertEqual(captured["endpoint"], "/api/ss/users")
+        self.assertEqual(captured["params"]["firstName"], "John")
+        self.assertEqual(captured["params"]["lastName"], "Citizen")
+        self.assertEqual(captured["params"]["email"], "john.citizen@attackforge.com")
+        self.assertEqual(captured["params"]["username"], "john.citizen@attackforge.com")
+        self.assertEqual(users[0]["id"], "u1")
+
+    def test_update_user_payload(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"user": {"id": "u1", "first_name": "Bruce"}}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            captured["json_data"] = json_data
+            return Resp()
+
+        self.client._request = fake_request
+        user = self.client.update_user(
+            user_id="u1",
+            first_name="Bruce",
+            last_name="Wayne",
+            email_address="bruce.wayne@batman.com",
+            username="bruce.wayne@batman.com",
+            is_deleted=False,
+        )
+        self.assertEqual(captured["endpoint"], "/api/ss/user/u1")
+        self.assertEqual(captured["json_data"]["first_name"], "Bruce")
+        self.assertEqual(captured["json_data"]["last_name"], "Wayne")
+        self.assertEqual(captured["json_data"]["email_address"], "bruce.wayne@batman.com")
+        self.assertEqual(captured["json_data"]["username"], "bruce.wayne@batman.com")
+        self.assertEqual(captured["json_data"]["is_deleted"], False)
+        self.assertEqual(user.get("id"), "u1")
+        with self.assertRaises(ValueError):
+            self.client.update_user("u1")
+
+    def test_activate_and_deactivate_user(self):
+        calls = []
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"status": "OK"}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            calls.append(endpoint)
+            return Resp()
+
+        self.client._request = fake_request
+        self.client.activate_user("u1")
+        self.client.deactivate_user("u1")
+        self.assertEqual(calls[0], "/api/ss/user/u1/activate")
+        self.assertEqual(calls[1], "/api/ss/user/u1/deactivate")
+
+    def test_group_membership_endpoints(self):
+        calls = []
+        payloads = []
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"status": "OK"}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            calls.append(endpoint)
+            payloads.append(json_data)
+            return Resp()
+
+        self.client._request = fake_request
+        self.client.add_user_to_group("g1", "u1", "View")
+        self.client.update_user_access_on_group("g1", "u1", "Edit")
+        self.assertEqual(calls[0], "/api/ss/group/user")
+        self.assertEqual(calls[1], "/api/ss/group/user/u1")
+        self.assertEqual(payloads[0]["group_id"], "g1")
+        self.assertEqual(payloads[0]["user_id"], "u1")
+        self.assertEqual(payloads[0]["access_level"], "View")
+        self.assertEqual(payloads[1]["access_level"], "Edit")
+
+    def test_update_user_access_on_project(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"status": "User Access Updated"}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            captured["json_data"] = json_data
+            return Resp()
+
+        self.client._request = fake_request
+        resp = self.client.update_user_access_on_project("p1", "u1", "Edit")
+        self.assertEqual(captured["endpoint"], "/api/ss/project/p1/access/u1")
+        self.assertEqual(captured["json_data"]["update"], "Edit")
+        self.assertIsInstance(resp, dict)
+
+    def test_invite_user_to_project(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"result": {"result": "User Invited"}}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            captured["json_data"] = json_data
+            return Resp()
+
+        self.client._request = fake_request
+        resp = self.client.invite_user_to_project("p1", "user@attackforge.com", "Edit", role="Pentester")
+        self.assertEqual(captured["endpoint"], "/api/ss/project/p1/invite")
+        self.assertEqual(captured["json_data"]["id"], "p1")
+        self.assertEqual(captured["json_data"]["username"], "user@attackforge.com")
+        self.assertEqual(captured["json_data"]["accessLevel"], "Edit")
+        self.assertEqual(captured["json_data"]["role"], "Pentester")
+        self.assertIsInstance(resp, dict)
+
+    def test_invite_users_to_project_team(self):
+        captured = {}
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"result": []}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["endpoint"] = endpoint
+            captured["json_data"] = json_data
+            return Resp()
+
+        self.client._request = fake_request
+        resp = self.client.invite_users_to_project_team(
+            "p1",
+            [
+                {"user": "u1", "accessLevel": "View"},
+                {"user": "u2", "accessLevel": "Edit"},
+            ],
+        )
+        self.assertEqual(captured["endpoint"], "/api/ss/project/p1/team/invite")
+        self.assertEqual(len(captured["json_data"]["users"]), 2)
+        self.assertIsInstance(resp, dict)
+
+    def test_get_user_groups_and_projects(self):
+        calls = []
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"groups": [{"group_id": "g1"}]}
+
+        class RespProjects:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"projects": [{"project_id": "p1"}]}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            calls.append(endpoint)
+            if endpoint.endswith("/groups"):
+                return Resp()
+            return RespProjects()
+
+        self.client._request = fake_request
+        groups = self.client.get_user_groups("u1")
+        projects = self.client.get_user_projects("u1")
+        self.assertEqual(calls[0], "/api/ss/user/u1/groups")
+        self.assertEqual(calls[1], "/api/ss/user/u1/projects")
+        self.assertEqual(groups[0]["group_id"], "g1")
+        self.assertEqual(projects[0]["project_id"], "p1")
+
+    def test_get_user_audit_logs_and_logins(self):
+        calls = []
+        params_seen = []
+
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"logs": [{"id": "l1"}]}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            calls.append(endpoint)
+            params_seen.append(params)
+            return Resp()
+
+        self.client._request = fake_request
+        logs = self.client.get_user_audit_logs(
+            "u1",
+            skip=10,
+            limit=100,
+            include_request_body=True,
+            endpoint="ProjectController.getProject",
+            method="GET",
+        )
+        logins = self.client.get_user_login_history("u1", skip=5, limit=50)
+        self.assertEqual(calls[0], "/api/ss/user/u1/auditlogs")
+        self.assertEqual(calls[1], "/api/ss/user/u1/logins")
+        self.assertEqual(params_seen[0]["skip"], 10)
+        self.assertEqual(params_seen[0]["include_request_body"], True)
+        self.assertEqual(params_seen[1]["skip"], 5)
+        self.assertEqual(logs[0]["id"], "l1")
+        self.assertEqual(logins[0]["id"], "l1")
+
     def test_upsert_finding_for_project_create(self):
-        # Simulate no existing findings (should create new)
         self.client.get_findings_for_project = lambda project_id: []
-        # Patch get_all_writeups to return a matching writeup for this test
         self.client.get_all_writeups = (
             lambda force_refresh=False: [
                 {
@@ -218,7 +544,6 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertEqual(result.get("action"), "create")
 
     def test_upsert_finding_for_project_update(self):
-        # Simulate an existing finding with the same title and some assets/notes
         existing_finding = {
             "vulnerability_id": "123",
             "vulnerability_title": "UnitTest Finding",
@@ -229,7 +554,6 @@ class TestPyAttackForgeClient(unittest.TestCase):
             "vulnerability_notes": [{"note": "Existing note", "type": "PLAINTEXT"}]
         }
         self.client.get_findings_for_project = lambda project_id: [existing_finding]
-        # Patch get_all_writeups to return a matching writeup for this test
         self.client.get_all_writeups = (
             lambda force_refresh=False: [
                 {
@@ -240,7 +564,6 @@ class TestPyAttackForgeClient(unittest.TestCase):
             ]
         )
         self.client.create_writeup = lambda **kwargs: {"reference_id": "dummy_writeup_id"}
-        # Patch _request to simulate API update response
 
         class Resp:
             status_code = 200
@@ -272,13 +595,11 @@ class TestPyAttackForgeClient(unittest.TestCase):
         )
         self.assertIsInstance(result, dict)
         self.assertEqual(result.get("action"), "update")
-        # Check that assets are merged and deduplicated
         update_payload = result.get("update_payload", {})
         asset_names = {
             a["assetName"] for a in update_payload.get("affected_assets", [])
         }
         self.assertSetEqual(asset_names, {"AssetA", "AssetB", "AssetC"})
-        # Check that notes are merged and deduplicated
         notes = update_payload.get("notes", [])
         note_texts = {n["note"] for n in notes}
         self.assertSetEqual(note_texts, {"Existing note", "New note"})
@@ -288,7 +609,6 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertTrue(writeup_id is None or isinstance(writeup_id, str))
 
     def test_project_scope_management_dry_run(self):
-        # Patch _request to simulate API responses
         def fake_request(method, endpoint, json_data=None, params=None):
             if method == "get" and endpoint == "/api/ss/project/dummy_project":
 
@@ -310,17 +630,13 @@ class TestPyAttackForgeClient(unittest.TestCase):
                 return Resp()
             raise RuntimeError("Unexpected API call")
         self.client._request = fake_request
-        # Test get_project_scope
         scope = self.client.get_project_scope("dummy_project")
         self.assertSetEqual(scope, {"AssetA", "AssetB"})
-        # Test update_project_scope (add AssetC)
         updated = self.client.update_project_scope("dummy_project", ["AssetC"])
         self.assertIn("scope", updated)
         self.assertIn("AssetC", updated["scope"])
 
     def test_create_writeup_missing_required_fields(self):
-        # Should raise ValueError if required fields are missing
-        # Do not patch create_writeup here so real validation is used
         with self.assertRaises(ValueError):
             self.client.create_writeup(
                 title="",
@@ -444,7 +760,6 @@ class TestPyAttackForgeClient(unittest.TestCase):
             self.client.update_finding("", project_id="p-1")
 
     def test_get_testcases(self):
-        # DummyResponse returns {}, so should yield an empty list without raising
         cases = self.client.get_testcases("proj1")
         self.assertIsInstance(cases, list)
         self.assertEqual(cases, [])
@@ -520,7 +835,6 @@ class TestPyAttackForgeClient(unittest.TestCase):
 
     def test_add_findings_to_testcase(self):
         captured = {}
-        # Simulate existing testcase with one linked vuln (as dict)
         self.client.get_testcases = lambda project_id: [
             {
                 "id": "tc1",

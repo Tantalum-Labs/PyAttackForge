@@ -7,6 +7,7 @@ A lightweight Python library for interacting with the AttackForge API.
 ## Features
 
 - Create and fetch projects
+- Manage users (create, update, activate/deactivate, access, audit logs)
 - Manage assets
 - Submit vulnerabilities
 - Create findings from existing writeups by passing a `writeup_id`
@@ -99,6 +100,43 @@ client.create_finding_from_writeup(
     steps_to_reproduce="1. Do something\n2. Observe result",
     notes=[{"note": "Created via API", "type": "PLAINTEXT"}],
     tags=["automation"]
+)
+```
+
+## User Management
+
+Create a user:
+```python
+client.create_user(
+    first_name="John",
+    last_name="Citizen",
+    username="john.citizen@attackforge.com",
+    email="john.citizen@attackforge.com",
+    password="ThisIsASuperLongPassword",
+    role="client",
+    mfa="Yes",
+)
+```
+
+Activate or deactivate a user:
+```python
+client.activate_user("5eacb8450c8d520a8281e539")
+client.deactivate_user("5eacb8450c8d520a8281e539")
+```
+
+Fetch users:
+```python
+users = client.get_users(email="john.citizen@attackforge.com")
+user = client.get_user_by_email("john.citizen@attackforge.com")
+```
+
+Invite users to a project:
+```python
+client.invite_user_to_project(
+    project_id="abc123",
+    username="user@attackforge.com",
+    access_level="Edit",
+    role="Pentester",
 )
 ```
 
@@ -239,8 +277,14 @@ See the source code for full details and docstrings.
       writeup_custom_fields: Optional[list] = None,
   ) -> dict`
 - `create_finding_from_writeup(project_id: str, writeup_id: str, priority: str, affected_assets: Optional[list] = None, linked_testcases: Optional[list] = None, **kwargs) -> dict`
+- `create_user(first_name: str, last_name: str, username: str, email: str, password: str, role: str, mfa: str) -> dict`
+- `create_users(users: List[Dict[str, Any]]) -> Any`
 - `get_findings_for_project(project_id: str, priority: Optional[str] = None) -> list`
 - `upsert_finding_for_project(...)`
+- `get_user(user_id: str) -> dict`
+- `get_user_by_email(email: str) -> dict`
+- `get_user_by_username(username: str) -> dict`
+- `get_users(first_name: Optional[str] = None, last_name: Optional[str] = None, email: Optional[str] = None, username: Optional[str] = None) -> list`
 - `get_vulnerability(vulnerability_id: str) -> dict`
 - `add_note_to_finding(vulnerability_id: str, note: Any, note_type: str = "PLAINTEXT") -> dict`
 - `upload_finding_evidence(vulnerability_id: str, file_path: str) -> dict`
@@ -251,8 +295,27 @@ See the source code for full details and docstrings.
 - `assign_findings_to_testcase(project_id: str, testcase_id: str, vulnerability_ids: List[str], existing_linked_vulnerabilities: Optional[List[str]] = None, additional_fields: Optional[Dict[str, Any]] = None) -> dict`
 - `add_findings_to_testcase(project_id: str, testcase_id: str, vulnerability_ids: List[str], additional_fields: Optional[Dict[str, Any]] = None) -> dict`
 - `add_note_to_testcase(project_id: str, testcase_id: str, note: str, status: Optional[str] = None) -> dict`
+- `update_user(user_id: str, first_name: Optional[str] = None, last_name: Optional[str] = None, email_address: Optional[str] = None, username: Optional[str] = None, is_deleted: Optional[bool] = None) -> dict`
+- `activate_user(user_id: str) -> dict`
+- `deactivate_user(user_id: str) -> dict`
+- `add_user_to_group(group_id: str, user_id: str, access_level: str) -> dict`
+- `update_user_access_on_group(group_id: str, user_id: str, access_level: str) -> dict`
+- `update_user_access_on_project(project_id: str, user_id: str, update_action: str) -> dict`
+- `invite_user_to_project(project_id: str, username: str, access_level: str, role: Optional[str] = None) -> dict`
+- `invite_users_to_project_team(project_id: str, users: List[Dict[str, Any]]) -> dict`
+- `get_user_groups(user_id: str) -> list`
+- `get_user_projects(user_id: str) -> list`
+- `get_user_audit_logs(user_id: str, skip: Optional[int] = None, limit: Optional[int] = None, include_request_body: Optional[bool] = None, endpoint: Optional[str] = None, method: Optional[str] = None) -> list`
+- `get_user_login_history(user_id: str, skip: Optional[int] = None, limit: Optional[int] = None) -> list`
 
 See the source code for full details and docstrings.
+
+---
+
+## Versioning and Changelog
+
+- Current release: `0.1.9`
+- See `CHANGELOG.md` for release notes.
 
 ---
 
