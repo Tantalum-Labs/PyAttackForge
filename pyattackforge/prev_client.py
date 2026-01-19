@@ -30,6 +30,11 @@ class PyAttackForgeClient:
     Supports dry-run mode for testing without making real API calls.
     """
 
+    def _unwrap(self, resp_json: Any, key: str) -> Any:
+        if isinstance(resp_json, dict) and key in resp_json:
+            return resp_json.get(key)
+        return resp_json
+
     def __init__(self, api_key: str, base_url: str = "https://demo.attackforge.com", dry_run: bool = False):
         """
         Initialize the PyAttackForgeClient.
@@ -125,13 +130,43 @@ class PyAttackForgeClient:
         Raises:
             RuntimeError: If asset creation fails.
         """
-        resp = self._request("post", "/api/ss/library/asset", json_data=asset_data)
+        if not asset_data:
+            raise ValueError("Missing required field: asset_data")
+        payload = dict(asset_data)
+        name = (
+            payload.get("name")
+            or payload.get("asset")
+            or payload.get("asset_name")
+            or payload.get("assetName")
+        )
+        if not name:
+            raise ValueError("Missing required field: asset name")
+        payload["name"] = name
+        payload.setdefault("asset", name)
+        asset_type = (
+            payload.get("asset_type")
+            or payload.get("assetType")
+            or payload.get("type")
+        )
+        if not asset_type:
+            asset_type = "Hostname"
+        payload.setdefault("asset_type", asset_type)
+        if "type" not in payload:
+            payload["type"] = asset_type
+
+        existing = self.get_asset_by_name(name)
+        if existing:
+            return existing
+
+        resp = self._request("post", "/api/ss/library/asset", json_data=payload)
         if resp.status_code in (200, 201):
-            asset = resp.json()
+            data = resp.json()
+            asset = self._unwrap(data, "asset")
             self._asset_cache = None
             return asset
-        if "Asset Already Exists" in resp.text:
-            return self.get_asset_by_name(asset_data["name"])
+        if "Asset Already Exists" in resp.text or "already exists" in resp.text.lower():
+            self._asset_cache = None
+            return self.get_asset_by_name(name) or {"already_exists": True, "name": name}
         raise RuntimeError(f"Asset creation failed: {resp.text}")
 
     def get_project_by_name(self, name: str) -> Optional[Dict[str, Any]]:
@@ -174,10 +209,83 @@ class PyAttackForgeClient:
         resp = self._request("get", f"/api/ss/project/{project_id}")
         if resp.status_code != 200:
             raise RuntimeError(f"Failed to retrieve project: {resp.text}")
+        project = self._unwrap(resp.json(), "project")
+        scope_raw = []
+        if isinstance(project, dict):
+            scope_raw = project.get("scope") or project.get("assets") or []
+        names: Set[str] = set()
+        for asset in scope_raw or []:
+            name = None
+            if isinstance(asset, dict):
+                name = (
+                    asset.get("assetName")
+                    or asset.get("name")
+                    or asset.get("asset")
+                )
+                if not name and isinstance(asset.get("asset"), dict):
+                    name = asset["asset"].get("name")
+            elif isinstance(asset, str):
+                name = asset
+            if name:
+                names.add(str(name))
+        self._project_scope_cache[project_id] = names
+        return names
 
-        scope = set(resp.json().get("scope", []))
-        self._project_scope_cache[project_id] = scope
-        return scope
+    def add_assets_to_project(
+        self,
+        project_id: str,
+        assets: List[Any],
+        asset_library_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Add assets to a project's scope using the documented CreateScope endpoint.
+
+        Args:
+            project_id (str): The project ID.
+            assets (list): Asset names or dicts containing name/id.
+            asset_library_ids (list, optional): Asset library IDs to map.
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not assets and not asset_library_ids:
+            raise ValueError("Missing required field: assets")
+        asset_names: List[str] = []
+        collected_ids: List[str] = []
+        for asset in assets or []:
+            if isinstance(asset, dict):
+                name = asset.get("assetName") or asset.get("name") or asset.get("asset")
+                if name:
+                    asset_names.append(str(name))
+                aid = (
+                    asset.get("asset_id")
+                    or asset.get("assetId")
+                    or asset.get("asset_library_id")
+                    or asset.get("id")
+                )
+                if aid:
+                    collected_ids.append(str(aid))
+            else:
+                asset_names.append(str(asset))
+        if asset_library_ids:
+            collected_ids.extend([str(a) for a in asset_library_ids if a])
+        payload: Dict[str, Any] = {}
+        if asset_names:
+            payload["assets"] = asset_names
+        if collected_ids:
+            payload["asset_library_ids"] = list(dict.fromkeys(collected_ids))
+        resp = self._request(
+            "post",
+            f"/api/ss/project/{project_id}/assets",
+            json_data=payload,
+        )
+        if resp.status_code not in (200, 201):
+            raise RuntimeError(f"Failed to update project scope: {resp.text}")
+        if asset_names:
+            self._project_scope_cache.pop(project_id, None)
+        return resp.json()
 
     def update_project_scope(self, project_id: str, new_assets: List[str]) -> Dict[str, Any]:
         """
@@ -193,13 +301,7 @@ class PyAttackForgeClient:
         Raises:
             RuntimeError: If update fails.
         """
-        current_scope = self.get_project_scope(project_id)
-        updated_scope = list(current_scope.union(new_assets))
-        resp = self._request("put", f"/api/ss/project/{project_id}", json_data={"scope": updated_scope})
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to update project scope: {resp.text}")
-        self._project_scope_cache[project_id] = set(updated_scope)
-        return resp.json()
+        return self.add_assets_to_project(project_id, new_assets)
 
     def create_project(self, name: str, **kwargs) -> Dict[str, Any]:
         """
@@ -235,7 +337,8 @@ class PyAttackForgeClient:
         }
         resp = self._request("post", "/api/ss/project", json_data=payload)
         if resp.status_code in (200, 201):
-            return resp.json()
+            data = resp.json()
+            return self._unwrap(data, "project")
         raise RuntimeError(f"Project creation failed: {resp.text}")
 
     def update_project(self, project_id: str, update_fields: Dict[str, Any]) -> Dict[str, Any]:
@@ -254,7 +357,8 @@ class PyAttackForgeClient:
         """
         resp = self._request("put", f"/api/ss/project/{project_id}", json_data=update_fields)
         if resp.status_code in (200, 201):
-            return resp.json()
+            data = resp.json()
+            return self._unwrap(data, "project")
         raise RuntimeError(f"Project update failed: {resp.text}")
 
     def create_vulnerability(
@@ -352,7 +456,8 @@ class PyAttackForgeClient:
 
         resp = self._request("post", "/api/ss/vulnerability", json_data=payload)
         if resp.status_code in (200, 201):
-            return resp.json()
+            data = resp.json()
+            return self._unwrap(data, "vulnerability")
         raise RuntimeError(f"Vulnerability creation failed: {resp.text}")
 
 

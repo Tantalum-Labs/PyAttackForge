@@ -1,0 +1,652 @@
+[
+  {
+    "slug": "getting-started",
+    "title": "GETTING STARTED",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getting-started"
+  },
+  {
+    "slug": "exporting-to-csv",
+    "title": "EXPORTING TO CSV",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/exporting-to-csv"
+  },
+  {
+    "slug": "advanced-query-filter",
+    "title": "ADVANCED QUERY FILTER",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/advanced-query-filter"
+  },
+  {
+    "slug": "activateuser",
+    "title": "ActivateUser",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/activateuser"
+  },
+  {
+    "slug": "addprojectmembershipadministrators",
+    "title": "AddProjectMembershipAdministrators",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/addprojectmembershipadministrators"
+  },
+  {
+    "slug": "addtestcasetotestsuite",
+    "title": "AddTestcaseToTestsuite",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/addtestcasetotestsuite"
+  },
+  {
+    "slug": "addtestcasestotestsuite",
+    "title": "AddTestcasesToTestsuite",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/addtestcasestotestsuite"
+  },
+  {
+    "slug": "addusertogroup",
+    "title": "AddUserToGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/addusertogroup"
+  },
+  {
+    "slug": "approveprojectrequestbyid",
+    "title": "ApproveProjectRequestById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/approveprojectrequestbyid"
+  },
+  {
+    "slug": "archivegroup",
+    "title": "ArchiveGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/archivegroup"
+  },
+  {
+    "slug": "archiveproject",
+    "title": "ArchiveProject",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/archiveproject"
+  },
+  {
+    "slug": "archiveportfolio",
+    "title": "ArchivePortfolio",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/archiveportfolio"
+  },
+  {
+    "slug": "cancelprojectretestround",
+    "title": "CancelProjectRetestRound",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/cancelprojectretestround"
+  },
+  {
+    "slug": "cloneproject",
+    "title": "CloneProject",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/cloneproject"
+  },
+  {
+    "slug": "completeprojectretestround",
+    "title": "CompleteProjectRetestRound",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/completeprojectretestround"
+  },
+  {
+    "slug": "createassetinlibrary",
+    "title": "CreateAssetInLibrary",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createassetinlibrary"
+  },
+  {
+    "slug": "creategroup",
+    "title": "CreateGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/creategroup"
+  },
+  {
+    "slug": "createportfolio",
+    "title": "CreatePortfolio",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createportfolio"
+  },
+  {
+    "slug": "createproject",
+    "title": "CreateProject",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createproject"
+  },
+  {
+    "slug": "createprojectnote",
+    "title": "CreateProjectNote",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createprojectnote"
+  },
+  {
+    "slug": "createprojectrequest",
+    "title": "CreateProjectRequest",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createprojectrequest"
+  },
+  {
+    "slug": "createprojecttestcase",
+    "title": "CreateProjectTestCase",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createprojecttestcase"
+  },
+  {
+    "slug": "createprojectworkspacenote",
+    "title": "CreateProjectWorkspaceNote",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createprojectworkspacenote"
+  },
+  {
+    "slug": "createremediationnote",
+    "title": "CreateRemediationNote",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createremediationnote"
+  },
+  {
+    "slug": "createscope",
+    "title": "CreateScope",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createscope"
+  },
+  {
+    "slug": "createtestcasenote",
+    "title": "CreateTestcaseNote",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createtestcasenote"
+  },
+  {
+    "slug": "createtestsuite",
+    "title": "CreateTestsuite",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createtestsuite"
+  },
+  {
+    "slug": "createuser",
+    "title": "CreateUser",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createuser"
+  },
+  {
+    "slug": "createusers",
+    "title": "CreateUsers",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createusers"
+  },
+  {
+    "slug": "createvulnerability",
+    "title": "CreateVulnerability",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createvulnerability"
+  },
+  {
+    "slug": "createvulnerabilitybulk",
+    "title": "CreateVulnerabilityBulk",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createvulnerabilitybulk"
+  },
+  {
+    "slug": "createvulnerabilitylibraryissue",
+    "title": "CreateVulnerabilityLibraryIssue",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createvulnerabilitylibraryissue"
+  },
+  {
+    "slug": "createvulnerabilitywithlibrary",
+    "title": "CreateVulnerabilityWithLibrary",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createvulnerabilitywithlibrary"
+  },
+  {
+    "slug": "deactivateuser",
+    "title": "DeactivateUser",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/deactivateuser"
+  },
+  {
+    "slug": "destroyproject",
+    "title": "DestroyProject",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/destroyproject"
+  },
+  {
+    "slug": "downloadprojecttestcasefile",
+    "title": "DownloadProjectTestCaseFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/downloadprojecttestcasefile"
+  },
+  {
+    "slug": "downloadprojecttestcasenotefile",
+    "title": "DownloadProjectTestCaseNoteFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/downloadprojecttestcasenotefile"
+  },
+  {
+    "slug": "downloadprojecttestcaseworkspacenotefile",
+    "title": "DownloadProjectTestCaseWorkspaceNoteFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/downloadprojecttestcaseworkspacenotefile"
+  },
+  {
+    "slug": "downloadremediationnotefile",
+    "title": "DownloadRemediationNoteFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/downloadremediationnotefile"
+  },
+  {
+    "slug": "downloadtestsuitetestcasefile",
+    "title": "DownloadTestSuiteTestCaseFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/downloadtestsuitetestcasefile"
+  },
+  {
+    "slug": "downloadvulnerabilityevidence",
+    "title": "DeleteVulnerabilityEvidence",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/downloadvulnerabilityevidence"
+  },
+  {
+    "slug": "downloadvulnerabilitylibraryfile",
+    "title": "DownloadVulnerabilityLibraryFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/downloadvulnerabilitylibraryfile"
+  },
+  {
+    "slug": "downloadworkspacefile",
+    "title": "DownloadWorkspaceFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/downloadworkspacefile"
+  },
+  {
+    "slug": "getapplicationauditlogs",
+    "title": "GetApplicationAuditLogs",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getapplicationauditlogs"
+  },
+  {
+    "slug": "getassets",
+    "title": "GetAssets",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getassets"
+  },
+  {
+    "slug": "getassetsbygroup",
+    "title": "GetAssetsByGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getassetsbygroup"
+  },
+  {
+    "slug": "getassetinlibrary",
+    "title": "GetAssetInLibrary",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getassetinlibrary"
+  },
+  {
+    "slug": "getassetsinlibrary",
+    "title": "GetAssetLibraryAssets",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getassetsinlibrary"
+  },
+  {
+    "slug": "getformconfig",
+    "title": "GetFormConfig",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getformconfig"
+  },
+  {
+    "slug": "getgroup",
+    "title": "GetGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getgroup"
+  },
+  {
+    "slug": "getgroups",
+    "title": "GetGroups",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getgroups"
+  },
+  {
+    "slug": "getmostcommonvulnerabilities",
+    "title": "GetMostCommonVulnerabilities",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getmostcommonvulnerabilities"
+  },
+  {
+    "slug": "getmostfailedtestcases",
+    "title": "GetMostFailedTestcases",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getmostfailedtestcases"
+  },
+  {
+    "slug": "getmostvulnerableassets",
+    "title": "GetMostVulnerableAssets",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getmostvulnerableassets"
+  },
+  {
+    "slug": "getportfolio",
+    "title": "GetPortfolio",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getportfolio"
+  },
+  {
+    "slug": "getportfolios",
+    "title": "GetPortfolios",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getportfolios"
+  },
+  {
+    "slug": "getportfoliostream",
+    "title": "GetPortfolioStream",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getportfoliostream"
+  },
+  {
+    "slug": "getprojectauditlogs",
+    "title": "GetProjectAuditLogs",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectauditlogs"
+  },
+  {
+    "slug": "getproject",
+    "title": "GetProjectById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getproject"
+  },
+  {
+    "slug": "getprojects",
+    "title": "GetProjects",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojects"
+  },
+  {
+    "slug": "getprojectsandvulnerabilities",
+    "title": "GetProjectsAndVulnerabilities",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectsandvulnerabilities"
+  },
+  {
+    "slug": "getprojectsbygroup",
+    "title": "GetProjectsByGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectsbygroup"
+  },
+  {
+    "slug": "getprojectmembershipadministrators",
+    "title": "GetProjectMembershipAdministrators",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectmembershipadministrators"
+  },
+  {
+    "slug": "getprojectnotes",
+    "title": "GetProjectNotes",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectnotes"
+  },
+  {
+    "slug": "getprojectreport",
+    "title": "GetProjectReport",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectreport"
+  },
+  {
+    "slug": "getprojectreportdata",
+    "title": "GetProjectReportData",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectreportdata"
+  },
+  {
+    "slug": "getprojectrequest",
+    "title": "GetProjectRequests",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectrequest"
+  },
+  {
+    "slug": "getprojectrequestbyid",
+    "title": "GetProjectRequestById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectrequestbyid"
+  },
+  {
+    "slug": "getprojecttestcases",
+    "title": "GetProjectTestcasesById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojecttestcases"
+  },
+  {
+    "slug": "getprojectvulnerabilities",
+    "title": "GetProjectVulnerabilitiesById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectvulnerabilities"
+  },
+  {
+    "slug": "getprojectworkspace",
+    "title": "GetProjectWorkspace",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getprojectworkspace"
+  },
+  {
+    "slug": "gettestsuite",
+    "title": "GetTestsuiteById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/gettestsuite"
+  },
+  {
+    "slug": "gettestsuites",
+    "title": "GetTestsuites",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/gettestsuites"
+  },
+  {
+    "slug": "getuserbyemail",
+    "title": "GetUserByEmail",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getuserbyemail"
+  },
+  {
+    "slug": "getuser",
+    "title": "GetUserById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getuser"
+  },
+  {
+    "slug": "getuserbyusername",
+    "title": "GetUserByUsername",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getuserbyusername"
+  },
+  {
+    "slug": "getuserauditlogs",
+    "title": "GetUserAuditLogs",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getuserauditlogs"
+  },
+  {
+    "slug": "getusergroups",
+    "title": "GetUserGroups",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getusergroups"
+  },
+  {
+    "slug": "getuserloginhistory",
+    "title": "GetUserLoginHistory",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getuserloginhistory"
+  },
+  {
+    "slug": "getuserprojects",
+    "title": "GetUserProjects",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getuserprojects"
+  },
+  {
+    "slug": "getusers",
+    "title": "GetUsers",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getusers"
+  },
+  {
+    "slug": "getvulnerability",
+    "title": "GetVulnerabilityById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getvulnerability"
+  },
+  {
+    "slug": "getvulnerabilities",
+    "title": "GetVulnerabilities",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getvulnerabilities"
+  },
+  {
+    "slug": "getvulnerabilitiesbyassetname",
+    "title": "GetVulnerabilitiesByAssetName",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getvulnerabilitiesbyassetname"
+  },
+  {
+    "slug": "getvulnerabilitiesbygroup",
+    "title": "GetVulnerabilitiesByGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getvulnerabilitiesbygroup"
+  },
+  {
+    "slug": "getvulnerabilitylibraryissues",
+    "title": "GetVulnerabilityLibraryIssues",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getvulnerabilitylibraryissues"
+  },
+  {
+    "slug": "getvulnerabilityrevisionhistory",
+    "title": "GetVulnerabilityRevisionHistory",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/getvulnerabilityrevisionhistory"
+  },
+  {
+    "slug": "inviteusertoproject",
+    "title": "InviteUserToProject",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/inviteusertoproject"
+  },
+  {
+    "slug": "inviteuserstoprojectteam",
+    "title": "InviteUsersToProjectTeam",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/inviteuserstoprojectteam"
+  },
+  {
+    "slug": "markdowntorichtext",
+    "title": "MarkdownToRichText",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/markdowntorichtext"
+  },
+  {
+    "slug": "rejectprojectrequest",
+    "title": "RejectProjectRequestById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/rejectprojectrequest"
+  },
+  {
+    "slug": "regenerateapikey",
+    "title": "RegenerateAPIKey",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/regenerateapikey"
+  },
+  {
+    "slug": "updateprojectmembershipadministrators",
+    "title": "RemoveProjectMembershipAdministrators",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateprojectmembershipadministrators"
+  },
+  {
+    "slug": "removeprojectteammembers",
+    "title": "RemoveProjectTeamMembers",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/removeprojectteammembers"
+  },
+  {
+    "slug": "requestnewprojectretest",
+    "title": "RequestNewProjectRetest",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/requestnewprojectretest"
+  },
+  {
+    "slug": "restoregroup",
+    "title": "RestoreGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/restoregroup"
+  },
+  {
+    "slug": "restoreproject",
+    "title": "RestoreProject",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/restoreproject"
+  },
+  {
+    "slug": "sendemail",
+    "title": "SendEmail",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/sendemail"
+  },
+  {
+    "slug": "senddailycommencementemail",
+    "title": "SendDailyCommencementEmail",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/senddailycommencementemail"
+  },
+  {
+    "slug": "senddailycompletionemail",
+    "title": "SendDailyCompletionEmail",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/senddailycompletionemail"
+  },
+  {
+    "slug": "updateassetinlibrary",
+    "title": "UpdateAssetInLibrary",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateassetinlibrary"
+  },
+  {
+    "slug": "updateexecsummarynotes",
+    "title": "UpdateExecSummaryNotes",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateexecsummarynotes"
+  },
+  {
+    "slug": "updateformconfig",
+    "title": "UpdateFormConfig",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateformconfig"
+  },
+  {
+    "slug": "updategroup",
+    "title": "UpdateGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updategroup"
+  },
+  {
+    "slug": "updateportfolio",
+    "title": "UpdatePortfolio",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateportfolio"
+  },
+  {
+    "slug": "updateproject",
+    "title": "UpdateProjectById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateproject"
+  },
+  {
+    "slug": "updateprojectmembershipadministrators-1",
+    "title": "UpdateProjectMembershipAdministrators",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateprojectmembershipadministrators-1"
+  },
+  {
+    "slug": "updateprojectnote",
+    "title": "UpdateProjectNote",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateprojectnote"
+  },
+  {
+    "slug": "updateprojectrequest",
+    "title": "UpdateProjectRequestById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateprojectrequest"
+  },
+  {
+    "slug": "updateprojectretestround",
+    "title": "UpdateProjectRetestRound",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateprojectretestround"
+  },
+  {
+    "slug": "updateprojectworkspacenote",
+    "title": "UpdateProjectWorkspaceNote",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateprojectworkspacenote"
+  },
+  {
+    "slug": "createremediationnote-1",
+    "title": "UpdateRemediationNote",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/createremediationnote-1"
+  },
+  {
+    "slug": "updatescope",
+    "title": "UpdateScope",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatescope"
+  },
+  {
+    "slug": "updatetestcase",
+    "title": "UpdateTestcase",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatetestcase"
+  },
+  {
+    "slug": "updatetestcaseontestsuite",
+    "title": "UpdateTestcaseOnTestsuite",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatetestcaseontestsuite"
+  },
+  {
+    "slug": "updatetestsuite",
+    "title": "UpdateTestsuite",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatetestsuite"
+  },
+  {
+    "slug": "updateuseraccessongroup",
+    "title": "UpdateUserAccessOnGroup",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateuseraccessongroup"
+  },
+  {
+    "slug": "updateuseraccessonproject",
+    "title": "UpdateUserAccessOnProject",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateuseraccessonproject"
+  },
+  {
+    "slug": "updateuser",
+    "title": "UpdateUser",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updateuser"
+  },
+  {
+    "slug": "updatevulnerability",
+    "title": "UpdateVulnerabilityById",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatevulnerability"
+  },
+  {
+    "slug": "updatevulnerabilitylibraryissue",
+    "title": "UpdateVulnerabilityLibraryIssue",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatevulnerabilitylibraryissue"
+  },
+  {
+    "slug": "updatevulnerabilityslas",
+    "title": "UpdateVulnerabilitySLAs",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatevulnerabilityslas"
+  },
+  {
+    "slug": "updatelinkedprojectsonvulnerabilities",
+    "title": "UpdateLinkedProjectsOnVulnerabilities",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatelinkedprojectsonvulnerabilities"
+  },
+  {
+    "slug": "updatevulnerabilitywithlibrary",
+    "title": "UpdateVulnerabilityWithLibrary",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/updatevulnerabilitywithlibrary"
+  },
+  {
+    "slug": "uploadremediationnotefile",
+    "title": "UploadRemediationNoteFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/uploadremediationnotefile"
+  },
+  {
+    "slug": "uploadtestcasefile",
+    "title": "UploadTestcaseFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/uploadtestcasefile"
+  },
+  {
+    "slug": "uploadtestsuitetestcasefile",
+    "title": "UploadTestSuiteTestCaseFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/uploadtestsuitetestcasefile"
+  },
+  {
+    "slug": "uploadvulnerabilityevidence",
+    "title": "UploadVulnerabilityEvidence",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/uploadvulnerabilityevidence"
+  },
+  {
+    "slug": "uploadvulnerabilitylibraryfile",
+    "title": "UploadVulnerabilityLibraryFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/uploadvulnerabilitylibraryfile"
+  },
+  {
+    "slug": "uploadworkspacefile",
+    "title": "UploadWorkspaceFile",
+    "url": "https://support.attackforge.com/attackforge-enterprise/modules/self-service-restful-api/uploadworkspacefile"
+  }
+]

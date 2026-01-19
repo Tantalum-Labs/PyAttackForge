@@ -14,10 +14,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import os
-import requests
+import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional, Set, Tuple, List
+
+import requests
 
 
 logger = logging.getLogger("pyattackforge")
@@ -30,6 +32,70 @@ class PyAttackForgeClient:
     Provides methods to manage assets, projects, and vulnerabilities.
     Supports dry-run mode for testing without making real API calls.
     """
+
+    def _unwrap(self, resp_json: Any, key: str) -> Any:
+        if isinstance(resp_json, dict) and key in resp_json:
+            return resp_json.get(key)
+        return resp_json
+
+    def _ensure_response(
+        self,
+        resp: Any,
+        expected: Tuple[int, ...],
+        action: str,
+    ) -> None:
+        if resp.status_code in (401, 403):
+            raise PermissionError(
+                f"Permission denied when attempting to {action}: {resp.status_code} {resp.text}"
+            )
+        if resp.status_code not in expected:
+            raise RuntimeError(f"Failed to {action}: {resp.text}")
+
+    def _build_asset_payloads(
+        self,
+        affected_assets: Optional[list]
+    ) -> Tuple[List[Dict[str, Any]], List[str], List[str]]:
+        payloads: List[Dict[str, Any]] = []
+        asset_names: List[str] = []
+        asset_ids: List[str] = []
+        for asset in affected_assets or []:
+            if isinstance(asset, dict):
+                nested_asset = asset.get("asset") if isinstance(asset.get("asset"), dict) else {}
+                name = asset.get("assetName") or asset.get("name")
+                if not name:
+                    if isinstance(asset.get("asset"), dict):
+                        name = nested_asset.get("name") or nested_asset.get("asset")
+                    else:
+                        name = asset.get("asset")
+                asset_id = (
+                    asset.get("assetId")
+                    or asset.get("asset_id")
+                    or asset.get("asset_library_id")
+                    or asset.get("id")
+                )
+                if not asset_id and nested_asset:
+                    asset_id = (
+                        nested_asset.get("assetId")
+                        or nested_asset.get("asset_id")
+                        or nested_asset.get("asset_library_id")
+                        or nested_asset.get("id")
+                    )
+                if name:
+                    asset_names.append(str(name))
+                if asset_id:
+                    asset_ids.append(str(asset_id))
+                payload: Dict[str, Any] = {}
+                if name:
+                    payload["assetName"] = name
+                if asset_id:
+                    payload["assetId"] = asset_id
+                payloads.append(payload or asset)
+            else:
+                if asset is None:
+                    continue
+                asset_names.append(str(asset))
+                payloads.append({"assetName": asset})
+        return payloads, asset_names, asset_ids
 
     def upsert_finding_for_project(
         self,
@@ -198,8 +264,7 @@ class PyAttackForgeClient:
             f"/api/ss/project/{project_id}/vulnerabilities",
             params=params or {},
         )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch findings: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch findings")
         data = resp.json()
         if isinstance(data, dict) and "vulnerabilities" in data:
             findings = data.get("vulnerabilities") or []
@@ -272,12 +337,9 @@ class PyAttackForgeClient:
         if not vulnerability_id:
             raise ValueError("Missing required field: vulnerability_id")
         resp = self._request("get", f"/api/ss/vulnerability/{vulnerability_id}")
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch vulnerability: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch vulnerability")
         data = resp.json()
-        if isinstance(data, dict) and "vulnerability" in data:
-            return data["vulnerability"]
-        return data
+        return self._unwrap(data, "vulnerability")
 
     def update_finding(
         self,
@@ -306,22 +368,17 @@ class PyAttackForgeClient:
         if project_id:
             payload["project_id"] = project_id
         if affected_assets is not None:
-            asset_names = [
-                a.get("assetName") if isinstance(a, dict) and "assetName" in a
-                else a.get("name") if isinstance(a, dict) and "name" in a
-                else a
-                for a in affected_assets
-            ]
-            payload["affected_assets"] = [{"assetName": n} for n in asset_names if n]
+            asset_payloads, _, _ = self._build_asset_payloads(affected_assets)
+            payload["affected_assets"] = asset_payloads
         if notes is not None:
             payload["notes"] = notes
         for key, value in (kwargs or {}).items():
             if value is not None:
                 payload[key] = value
         resp = self._request("put", f"/api/ss/vulnerability/{vulnerability_id}", json_data=payload)
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to update finding: {resp.text}")
-        return resp.json()
+        self._ensure_response(resp, (200, 201), "update finding")
+        data = resp.json()
+        return self._unwrap(data, "vulnerability")
 
     def add_note_to_finding(
         self,
@@ -377,9 +434,9 @@ class PyAttackForgeClient:
             collected_notes.append(note_entry)
         payload = {"notes": collected_notes}
         resp = self._request("put", f"/api/ss/vulnerability/{vulnerability_id}", json_data=payload)
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to add note: {resp.text}")
-        return resp.json()
+        self._ensure_response(resp, (200, 201), "add note to finding")
+        data = resp.json()
+        return self._unwrap(data, "vulnerability")
 
     def link_vulnerability_to_testcases(
         self,
@@ -412,25 +469,33 @@ class PyAttackForgeClient:
             f"/api/ss/vulnerability/{vulnerability_id}",
             json_data=payload,
         )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to link vulnerability to testcases: {resp.text}")
-        return resp.json()
+        self._ensure_response(resp, (200, 201), "link vulnerability to testcases")
+        data = resp.json()
+        return self._unwrap(data, "vulnerability")
 
-    def get_testcases(self, project_id: str) -> List[Dict[str, Any]]:
+    def get_testcases(
+        self,
+        project_id: str,
+        params: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """
         Retrieve testcases for a project.
 
         Args:
             project_id (str): Project ID.
+            params (dict, optional): Optional query params (e.g., pagination or filters).
 
         Returns:
             list: List of testcase dicts.
         """
         if not project_id:
             raise ValueError("Missing required field: project_id")
-        resp = self._request("get", f"/api/ss/project/{project_id}/testcases")
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to fetch testcases: {resp.text}")
+        resp = self._request(
+            "get",
+            f"/api/ss/project/{project_id}/testcases",
+            params=params or None
+        )
+        self._ensure_response(resp, (200, 201), "fetch testcases")
         data = resp.json()
         if isinstance(data, dict) and "testcases" in data:
             return data.get("testcases", [])
@@ -456,20 +521,96 @@ class PyAttackForgeClient:
         resp = self._request("get", f"/api/ss/project/{project_id}/testcase/{testcase_id}")
         if resp.status_code == 404:
             return None
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to fetch testcase: {resp.text}")
+        self._ensure_response(resp, (200, 201), "fetch testcase")
         data = resp.json()
-        if isinstance(data, dict) and "testcase" in data:
-            return data["testcase"]
-        return data if isinstance(data, dict) else None
+        return self._unwrap(data, "testcase") if isinstance(data, dict) else None
 
-    def upload_finding_evidence(self, vulnerability_id: str, file_path: str) -> Dict[str, Any]:
+    def create_testcase(
+        self,
+        project_id: str,
+        testcase: str,
+        details: Optional[str] = None,
+        status: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Create a testcase for a project.
+
+        Args:
+            project_id (str): Project ID.
+            testcase (str): Testcase title/name.
+            details (str, optional): Testcase details/description.
+            status (str, optional): Initial status (e.g., "Not Started").
+            tags (list, optional): Tags to associate with the testcase.
+            **kwargs: Additional fields accepted by the API.
+
+        Returns:
+            dict: Created testcase details.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase:
+            raise ValueError("Missing required field: testcase")
+        payload: Dict[str, Any] = {"testcase": testcase}
+        if details is not None:
+            payload["details"] = details
+        if status is not None:
+            payload["status"] = status
+        if tags is not None:
+            payload["tags"] = tags
+        payload.update(kwargs)
+        resp = self._request(
+            "post",
+            f"/api/ss/project/{project_id}/testcase",
+            json_data=payload
+        )
+        self._ensure_response(resp, (200, 201), "create testcase")
+        data = resp.json()
+        return self._unwrap(data, "testcase")
+
+    def delete_testcase(self, project_id: str, testcase_id: str) -> Dict[str, Any]:
+        """
+        Delete a testcase from a project.
+
+        Args:
+            project_id (str): Project ID.
+            testcase_id (str): Testcase ID.
+
+        Returns:
+            dict: API response (or a simple deleted marker if empty).
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase_id:
+            raise ValueError("Missing required field: testcase_id")
+        resp = self._request(
+            "delete",
+            f"/api/ss/project/{project_id}/testcase/{testcase_id}"
+        )
+        self._ensure_response(resp, (200, 204), "delete testcase")
+        if resp.status_code == 204:
+            return {"deleted": True}
+        try:
+            data = resp.json()
+        except ValueError:
+            return {"deleted": True}
+        return data if data else {"deleted": True}
+
+    def upload_finding_evidence(
+        self,
+        vulnerability_id: str,
+        file_path: str,
+        dedupe: bool = True
+    ) -> Dict[str, Any]:
         """
         Upload evidence to a finding/vulnerability.
 
         Args:
             vulnerability_id (str): The vulnerability ID.
             file_path (str): Path to the evidence file.
+
+            dedupe (bool): Skip upload if evidence already exists (default: True).
 
         Returns:
             dict: API response.
@@ -481,6 +622,26 @@ class PyAttackForgeClient:
         if not os.path.isfile(file_path):
             raise FileNotFoundError(f"Evidence file not found: {file_path}")
         endpoint = f"/api/ss/vulnerability/{vulnerability_id}/evidence"
+        if dedupe:
+            try:
+                vuln = self.get_vulnerability(vulnerability_id)
+                evidence_items = []
+                if isinstance(vuln, dict):
+                    evidence_items = vuln.get("vulnerability_evidence") or []
+                basename = os.path.basename(file_path)
+                file_size = os.path.getsize(file_path)
+                file_hash = self._sha256_file(file_path)
+                for item in evidence_items:
+                    if self._evidence_matches(item, basename, file_size, file_hash):
+                        return {
+                            "skipped": True,
+                            "reason": "duplicate_evidence",
+                            "existing_evidence": item,
+                        }
+            except PermissionError:
+                raise
+            except Exception as exc:
+                logger.warning("Evidence dedupe check failed; proceeding with upload: %s", exc)
         if self.dry_run:
             resp = self._request("post", endpoint)
             return resp.json()
@@ -490,9 +651,34 @@ class PyAttackForgeClient:
                 endpoint,
                 files={"file": (os.path.basename(file_path), evidence)}
             )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Evidence upload failed: {resp.text}")
+        self._ensure_response(resp, (200, 201), "upload finding evidence")
         return resp.json()
+
+    def delete_finding_evidence(self, vulnerability_id: str, storage_name: str) -> Dict[str, Any]:
+        """
+        Delete evidence from a vulnerability by storage name.
+
+        Args:
+            vulnerability_id (str): The vulnerability ID.
+            storage_name (str): Evidence storage name returned by the API.
+
+        Returns:
+            dict: API response or deleted marker.
+        """
+        if not vulnerability_id:
+            raise ValueError("Missing required field: vulnerability_id")
+        if not storage_name:
+            raise ValueError("Missing required field: storage_name")
+        endpoint = f"/api/ss/vulnerability/{vulnerability_id}/evidence/{storage_name}"
+        resp = self._request("delete", endpoint)
+        self._ensure_response(resp, (200, 204), "delete finding evidence")
+        if resp.status_code == 204:
+            return {"deleted": True}
+        try:
+            data = resp.json()
+        except ValueError:
+            return {"deleted": True}
+        return data if data else {"deleted": True}
 
     def upload_testcase_evidence(
         self,
@@ -529,8 +715,7 @@ class PyAttackForgeClient:
                 endpoint,
                 files={"file": (os.path.basename(file_path), evidence)}
             )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Testcase evidence upload failed: {resp.text}")
+        self._ensure_response(resp, (200, 201), "upload testcase evidence")
         return resp.json()
 
     def add_note_to_testcase(
@@ -561,8 +746,7 @@ class PyAttackForgeClient:
         endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}/note"
         payload: Dict[str, Any] = {"note": note, "note_type": "PLAINTEXT"}
         resp = self._request("post", endpoint, json_data=payload)
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to add testcase note: {resp.text}")
+        self._ensure_response(resp, (200, 201), "add testcase note")
         result = resp.json()
 
         if status:
@@ -634,9 +818,9 @@ class PyAttackForgeClient:
             raise ValueError("update_fields cannot be empty")
         endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}"
         resp = self._request("put", endpoint, json_data=update_fields)
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to update testcase: {resp.text}")
-        return resp.json()
+        self._ensure_response(resp, (200, 201), "update testcase")
+        data = resp.json()
+        return self._unwrap(data, "testcase")
 
     def add_findings_to_testcase(
         self,
@@ -664,8 +848,14 @@ class PyAttackForgeClient:
         if not vulnerability_ids:
             raise ValueError("vulnerability_ids must contain at least one ID")
 
-        testcases = self.get_testcases(project_id)
-        testcase = next((t for t in testcases if t.get("id") == testcase_id), None)
+        testcase = None
+        try:
+            testcase = self.get_testcase(project_id, testcase_id)
+        except Exception:
+            testcase = None
+        if not testcase:
+            testcases = self.get_testcases(project_id)
+            testcase = next((t for t in testcases if t.get("id") == testcase_id), None)
         if not testcase:
             raise RuntimeError(f"Testcase '{testcase_id}' not found in project '{project_id}'")
 
@@ -734,10 +924,9 @@ class PyAttackForgeClient:
         resp = self._request("post", "/api/ss/user", json_data=payload)
         if resp.status_code in (200, 201):
             data = resp.json()
-            if isinstance(data, dict) and "user" in data:
-                return data["user"]
-            return data
-        raise RuntimeError(f"User creation failed: {resp.text}")
+            return self._unwrap(data, "user")
+        self._ensure_response(resp, (200, 201), "create user")
+        return resp.json()
 
     def create_users(self, users: List[Dict[str, Any]]) -> Any:
         """
@@ -752,9 +941,8 @@ class PyAttackForgeClient:
         if not users:
             raise ValueError("users must contain at least one user payload")
         resp = self._request("post", "/api/ss/users", json_data=users)
-        if resp.status_code in (200, 201):
-            return resp.json()
-        raise RuntimeError(f"Bulk user creation failed: {resp.text}")
+        self._ensure_response(resp, (200, 201), "bulk create users")
+        return resp.json()
 
     def get_user(self, user_id: str) -> Dict[str, Any]:
         """
@@ -769,12 +957,9 @@ class PyAttackForgeClient:
         if not user_id:
             raise ValueError("Missing required field: user_id")
         resp = self._request("get", f"/api/ss/users/{user_id}")
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch user: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch user")
         data = resp.json()
-        if isinstance(data, dict) and "user" in data:
-            return data["user"]
-        return data
+        return self._unwrap(data, "user")
 
     def get_user_by_email(self, email: str) -> Dict[str, Any]:
         """
@@ -790,12 +975,9 @@ class PyAttackForgeClient:
             raise ValueError("Missing required field: email")
         email_value = requests.utils.quote(email, safe="")
         resp = self._request("get", f"/api/ss/users/email/{email_value}")
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch user by email: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch user by email")
         data = resp.json()
-        if isinstance(data, dict) and "user" in data:
-            return data["user"]
-        return data
+        return self._unwrap(data, "user")
 
     def get_user_by_username(self, username: str) -> Dict[str, Any]:
         """
@@ -811,12 +993,9 @@ class PyAttackForgeClient:
             raise ValueError("Missing required field: username")
         username_value = requests.utils.quote(username, safe="")
         resp = self._request("get", f"/api/ss/users/username/{username_value}")
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch user by username: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch user by username")
         data = resp.json()
-        if isinstance(data, dict) and "user" in data:
-            return data["user"]
-        return data
+        return self._unwrap(data, "user")
 
     def get_users(
         self,
@@ -847,8 +1026,7 @@ class PyAttackForgeClient:
         if username:
             params["username"] = username
         resp = self._request("get", "/api/ss/users", params=params or None)
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch users: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch users")
         data = resp.json()
         if isinstance(data, dict) and "users" in data:
             return data.get("users", [])
@@ -895,12 +1073,9 @@ class PyAttackForgeClient:
         if not payload:
             raise ValueError("No update fields provided for user")
         resp = self._request("put", f"/api/ss/user/{user_id}", json_data=payload)
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to update user: {resp.text}")
+        self._ensure_response(resp, (200, 201), "update user")
         data = resp.json()
-        if isinstance(data, dict) and "user" in data:
-            return data["user"]
-        return data
+        return self._unwrap(data, "user")
 
     def activate_user(self, user_id: str) -> Dict[str, Any]:
         """
@@ -915,8 +1090,7 @@ class PyAttackForgeClient:
         if not user_id:
             raise ValueError("Missing required field: user_id")
         resp = self._request("put", f"/api/ss/user/{user_id}/activate")
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to activate user: {resp.text}")
+        self._ensure_response(resp, (200, 201), "activate user")
         return resp.json()
 
     def deactivate_user(self, user_id: str) -> Dict[str, Any]:
@@ -932,8 +1106,7 @@ class PyAttackForgeClient:
         if not user_id:
             raise ValueError("Missing required field: user_id")
         resp = self._request("put", f"/api/ss/user/{user_id}/deactivate")
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to deactivate user: {resp.text}")
+        self._ensure_response(resp, (200, 201), "deactivate user")
         return resp.json()
 
     def add_user_to_group(
@@ -965,8 +1138,7 @@ class PyAttackForgeClient:
             "access_level": access_level,
         }
         resp = self._request("post", "/api/ss/group/user", json_data=payload)
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to add user to group: {resp.text}")
+        self._ensure_response(resp, (200, 201), "add user to group")
         return resp.json()
 
     def update_user_access_on_group(
@@ -1002,8 +1174,7 @@ class PyAttackForgeClient:
             f"/api/ss/group/user/{user_id}",
             json_data=payload,
         )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to update user access on group: {resp.text}")
+        self._ensure_response(resp, (200, 201), "update user access on group")
         return resp.json()
 
     def update_user_access_on_project(
@@ -1035,8 +1206,7 @@ class PyAttackForgeClient:
             f"/api/ss/project/{project_id}/access/{user_id}",
             json_data=payload,
         )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to update user access on project: {resp.text}")
+        self._ensure_response(resp, (200, 201), "update user access on project")
         return resp.json()
 
     def invite_user_to_project(
@@ -1076,8 +1246,7 @@ class PyAttackForgeClient:
             f"/api/ss/project/{project_id}/invite",
             json_data=payload,
         )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to invite user to project: {resp.text}")
+        self._ensure_response(resp, (200, 201), "invite user to project")
         return resp.json()
 
     def invite_users_to_project_team(
@@ -1105,8 +1274,7 @@ class PyAttackForgeClient:
             f"/api/ss/project/{project_id}/team/invite",
             json_data=payload,
         )
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to invite users to project: {resp.text}")
+        self._ensure_response(resp, (200, 201), "invite users to project team")
         return resp.json()
 
     def get_user_groups(self, user_id: str) -> List[Dict[str, Any]]:
@@ -1122,8 +1290,7 @@ class PyAttackForgeClient:
         if not user_id:
             raise ValueError("Missing required field: user_id")
         resp = self._request("get", f"/api/ss/user/{user_id}/groups")
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch user groups: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch user groups")
         data = resp.json()
         if isinstance(data, dict) and "groups" in data:
             return data.get("groups", [])
@@ -1144,8 +1311,7 @@ class PyAttackForgeClient:
         if not user_id:
             raise ValueError("Missing required field: user_id")
         resp = self._request("get", f"/api/ss/user/{user_id}/projects")
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch user projects: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch user projects")
         data = resp.json()
         if isinstance(data, dict) and "projects" in data:
             return data.get("projects", [])
@@ -1194,8 +1360,7 @@ class PyAttackForgeClient:
             f"/api/ss/user/{user_id}/auditlogs",
             params=params or None,
         )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch user audit logs: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch user audit logs")
         data = resp.json()
         if isinstance(data, dict) and "logs" in data:
             return data.get("logs", [])
@@ -1232,8 +1397,7 @@ class PyAttackForgeClient:
             f"/api/ss/user/{user_id}/logins",
             params=params or None,
         )
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch user login history: {resp.text}")
+        self._ensure_response(resp, (200,), "fetch user login history")
         data = resp.json()
         if isinstance(data, dict) and "logs" in data:
             return data.get("logs", [])
@@ -1241,7 +1405,14 @@ class PyAttackForgeClient:
             return data
         return []
 
-    def __init__(self, api_key: str, base_url: str = "https://demo.attackforge.com", dry_run: bool = False):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://demo.attackforge.com",
+        dry_run: bool = False,
+        verify_ssl: Optional[bool] = None,
+        default_library: Optional[str] = None,
+    ):
         """
         Initialize the PyAttackForgeClient.
 
@@ -1250,56 +1421,89 @@ class PyAttackForgeClient:
             base_url (str, optional): The base URL for the AttackForge instance. Defaults to "https://demo.attackforge.com".
             dry_run (bool, optional): If True, no real API calls are made. Defaults to False.
         """
-        self.base_url = base_url.rstrip("/")
+        base = (base_url or "").strip()
+        if base and not base.startswith(("http://", "https://")):
+            base = f"https://{base}"
+        self.base_url = base.rstrip("/")
         self.headers = {
             "X-SSAPI-KEY": api_key,
             "Content-Type": "application/json",
             "Connection": "close"
         }
         self.dry_run = dry_run
+        if verify_ssl is None:
+            verify_ssl = os.getenv("ATTACKFORGE_VERIFY_SSL", "1") not in ("0", "false", "False")
+        self.verify_ssl = bool(verify_ssl)
+        self.default_library = default_library or os.getenv(
+            "PYATTACKFORGE_BELONGS_TO_LIBRARY", "Main Vulnerabilities"
+        )
         self._asset_cache = None
         self._project_scope_cache = {}
-        self._writeup_cache = None
+        self._writeup_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
 
-    def get_all_writeups(self, force_refresh: bool = False) -> list:
+    def get_all_writeups(
+        self,
+        force_refresh: bool = False,
+        belongs_to_library: Optional[str] = None,
+        query: Optional[str] = None,
+    ) -> list:
         """
         Fetches and caches all writeups from the /api/ss/library endpoint.
 
         Args:
             force_refresh (bool): If True, refresh the cache even if it exists.
 
+            belongs_to_library (str, optional): Filter by library name.
+            query (str, optional): Search term for writeups.
+
         Returns:
             list: List of writeup dicts.
         """
-        if self._writeup_cache is not None and not force_refresh:
-            return self._writeup_cache
-        resp = self._request("get", "/api/ss/library")
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch writeups: {resp.text}")
+        library_name = belongs_to_library or self.default_library
+        cache_key = (library_name or "", query or "")
+        if cache_key in self._writeup_cache and not force_refresh:
+            return self._writeup_cache[cache_key]
+        params: Dict[str, Any] = {}
+        if library_name:
+            params["belongs_to_library"] = library_name
+        if query:
+            params["q"] = query
+        resp = self._request("get", "/api/ss/library", params=params or None)
+        self._ensure_response(resp, (200,), "fetch writeups")
         data = resp.json()
         if isinstance(data, dict) and "vulnerabilities" in data:
-            self._writeup_cache = data["vulnerabilities"]
+            writeups = data["vulnerabilities"]
         elif isinstance(data, list):
-            self._writeup_cache = data
+            writeups = data
         else:
-            self._writeup_cache = data if isinstance(data, list) else []
-        return self._writeup_cache
+            writeups = data if isinstance(data, list) else []
+        self._writeup_cache[cache_key] = writeups if isinstance(writeups, list) else []
+        return self._writeup_cache[cache_key]
 
-    def find_writeup_in_cache(self, title: str, library: str = "Main Library") -> str:
+    def find_writeup_in_cache(self, title: str, library: Optional[str] = None) -> Optional[str]:
         """
         Searches the cached writeups for a writeup with the given title and library.
 
         Args:
             title (str): The title of the writeup to find.
-            library (str): The library name (default: "Main Library").
+            library (str): The library name (default: "Main Vulnerabilities").
 
         Returns:
             str: The writeup's reference_id if found, else None.
         """
-        writeups = self.get_all_writeups()
+        library_name = library or self.default_library
+        writeups = self.get_all_writeups(belongs_to_library=library_name)
         for w in writeups:
-            if w.get("title") == title and w.get("belongs_to_library", w.get("library", "")) == library:
-                return w.get("reference_id")
+            if w.get("title") != title:
+                continue
+            library_value = (
+                w.get("belongs_to_library")
+                or w.get("library")
+                or w.get("library_name")
+            )
+            if library_name and library_value != library_name:
+                continue
+            return w.get("reference_id") or w.get("id") or w.get("_id")
         return None
 
     def _request(
@@ -1336,7 +1540,8 @@ class PyAttackForgeClient:
             json=json_data,
             params=params,
             files=files,
-            data=data
+            data=data,
+            verify=self.verify_ssl,
         )
 
     def get_assets(self) -> Dict[str, Dict[str, Any]]:
@@ -1345,6 +1550,7 @@ class PyAttackForgeClient:
             skip, limit = 0, 500
             while True:
                 resp = self._request("get", "/api/ss/assets", params={"skip": skip, "limit": limit})
+                self._ensure_response(resp, (200,), "fetch assets")
                 data = resp.json()
                 for asset in data.get("assets", []):
                     name = asset.get("asset")
@@ -1358,8 +1564,122 @@ class PyAttackForgeClient:
     def get_asset_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         return self.get_assets().get(name)
 
-    def create_asset(self, asset_data: Dict[str, Any]) -> Dict[str, Any]:
-        pass
+    def create_asset(
+        self,
+        asset_data: Optional[Dict[str, Any]] = None,
+        name: Optional[str] = None,
+        asset_type: Optional[str] = None,
+        asset_library_ids: Optional[List[str]] = None,
+        custom_fields: Optional[list] = None,
+        external_ids: Optional[list] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Create a new asset in the asset library.
+
+        Args:
+            asset_data (dict, optional): Asset details. Supports keys like "name", "asset",
+                "type", "asset_type", "custom_fields", and "external_ids".
+            name (str, optional): Asset name.
+            asset_type (str, optional): Asset type (defaults to "Other").
+            asset_library_ids (list, optional): Asset library IDs to map.
+            custom_fields (list, optional): Custom fields payload for the asset.
+            external_ids (list, optional): External IDs payload for the asset.
+            **kwargs: Additional fields accepted by the API.
+
+        Returns:
+            dict: Created asset details or existing asset if already present.
+        """
+        if asset_data is not None and not isinstance(asset_data, dict):
+            raise ValueError("asset_data must be a dict when provided")
+        payload: Dict[str, Any] = {}
+        if asset_data:
+            payload.update(asset_data)
+        if kwargs:
+            payload.update(kwargs)
+        resolved_name = (
+            name
+            or payload.get("name")
+            or payload.get("asset")
+            or payload.get("asset_name")
+            or payload.get("assetName")
+        )
+        if not resolved_name:
+            raise ValueError("Missing required field: asset name")
+        payload["name"] = resolved_name
+        payload.setdefault("asset", resolved_name)
+        resolved_type = (
+            asset_type
+            or payload.get("type")
+            or payload.get("asset_type")
+            or payload.get("assetType")
+        )
+        if not resolved_type:
+            resolved_type = "Other"
+        payload["type"] = resolved_type
+        payload.setdefault("asset_type", resolved_type)
+        if custom_fields is not None:
+            payload["custom_fields"] = custom_fields
+        if asset_library_ids is not None:
+            payload["asset_library_ids"] = [str(a) for a in asset_library_ids if a]
+        if external_ids is not None:
+            external_id_value: Optional[Any] = external_ids
+            if isinstance(external_ids, (list, tuple)):
+                external_id_value = next((item for item in external_ids if item), None)
+            if external_id_value is not None:
+                payload["external_id"] = external_id_value
+            payload.pop("external_ids", None)
+        elif "external_ids" in payload and "external_id" not in payload:
+            external_id_value = payload.pop("external_ids", None)
+            if isinstance(external_id_value, (list, tuple)):
+                external_id_value = next((item for item in external_id_value if item), None)
+            if external_id_value is not None:
+                payload["external_id"] = external_id_value
+
+        try:
+            existing = self.get_asset_by_name(resolved_name)
+        except PermissionError as exc:
+            logger.warning(
+                "Unable to check existing assets due to permissions; proceeding to create: %s",
+                exc,
+            )
+            existing = None
+        if existing:
+            return existing
+
+        resp = self._request("post", "/api/ss/library/asset", json_data=payload)
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            asset = self._unwrap(data, "asset")
+            self._asset_cache = None
+            return asset
+        already_exists = "already exists" in resp.text.lower() if resp.text else False
+        if not already_exists:
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+            message = ""
+            if isinstance(data, dict):
+                message = str(
+                    data.get("message")
+                    or data.get("error")
+                    or data.get("detail")
+                    or ""
+                ).lower()
+            already_exists = "already exists" in message
+        if already_exists:
+            self._asset_cache = None
+            try:
+                return self.get_asset_by_name(resolved_name) or {
+                    "already_exists": True,
+                    "name": resolved_name,
+                }
+            except PermissionError:
+                return {"already_exists": True, "name": resolved_name}
+        self._ensure_response(resp, (200, 201), "create asset")
+        data = resp.json()
+        return self._unwrap(data, "asset")
 
     def get_project_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         params = {
@@ -1368,31 +1688,114 @@ class PyAttackForgeClient:
             "status": "All"
         }
         resp = self._request("get", "/api/ss/projects", params=params)
+        self._ensure_response(resp, (200,), "fetch projects")
         for proj in resp.json().get("projects", []):
             if proj.get("project_name") == name:
                 return proj
         return None
 
+    def get_project_by_id(self, project_id: str) -> Dict[str, Any]:
+        """
+        Retrieve a project by ID.
+
+        Args:
+            project_id (str): Project ID.
+
+        Returns:
+            dict: Project details.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        resp = self._request("get", f"/api/ss/project/{project_id}")
+        self._ensure_response(resp, (200,), "fetch project")
+        data = resp.json()
+        return self._unwrap(data, "project")
+
     def get_project_scope(self, project_id: str) -> Set[str]:
         if project_id in self._project_scope_cache:
             return self._project_scope_cache[project_id]
+        project = self.get_project_by_id(project_id)
+        scope_raw = []
+        if isinstance(project, dict):
+            scope_raw = project.get("scope") or project.get("assets") or []
+        names: Set[str] = set()
+        for asset in scope_raw or []:
+            name = None
+            if isinstance(asset, dict):
+                name = (
+                    asset.get("assetName")
+                    or asset.get("name")
+                    or asset.get("asset")
+                )
+                if not name and isinstance(asset.get("asset"), dict):
+                    name = asset["asset"].get("name")
+            elif isinstance(asset, str):
+                name = asset
+            if name:
+                names.add(str(name))
+        self._project_scope_cache[project_id] = names
+        return names
 
-        resp = self._request("get", f"/api/ss/project/{project_id}")
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to retrieve project: {resp.text}")
+    def add_assets_to_project(
+        self,
+        project_id: str,
+        assets: List[Any],
+        asset_library_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Add assets to a project's scope using the documented CreateScope endpoint.
 
-        scope = set(resp.json().get("scope", []))
-        self._project_scope_cache[project_id] = scope
-        return scope
+        Args:
+            project_id (str): Project ID.
+            assets (list): Asset names or dicts containing name/id.
+            asset_library_ids (list, optional): Asset library IDs to map (if assets module enabled).
+
+        Returns:
+            dict: API response.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not assets and not asset_library_ids:
+            raise ValueError("Missing required field: assets")
+        asset_names: List[str] = []
+        collected_ids: List[str] = []
+        for asset in assets or []:
+            if isinstance(asset, dict):
+                name = asset.get("assetName") or asset.get("name") or asset.get("asset")
+                if name:
+                    asset_names.append(str(name))
+                aid = (
+                    asset.get("asset_id")
+                    or asset.get("assetId")
+                    or asset.get("asset_library_id")
+                    or asset.get("id")
+                )
+                if aid:
+                    collected_ids.append(str(aid))
+            else:
+                asset_names.append(str(asset))
+        if asset_library_ids:
+            collected_ids.extend([str(a) for a in asset_library_ids if a])
+        payload: Dict[str, Any] = {}
+        if asset_names:
+            payload["assets"] = asset_names
+        if collected_ids:
+            payload["asset_library_ids"] = list(dict.fromkeys(collected_ids))
+        resp = self._request(
+            "post",
+            f"/api/ss/project/{project_id}/assets",
+            json_data=payload,
+        )
+        self._ensure_response(resp, (200, 201), "add assets to project scope")
+        if asset_names:
+            self._project_scope_cache.pop(project_id, None)
+        return resp.json()
 
     def update_project_scope(self, project_id: str, new_assets: List[str]) -> Dict[str, Any]:
-        current_scope = self.get_project_scope(project_id)
-        updated_scope = list(current_scope.union(new_assets))
-        resp = self._request("put", f"/api/ss/project/{project_id}", json_data={"scope": updated_scope})
-        if resp.status_code not in (200, 201):
-            raise RuntimeError(f"Failed to update project scope: {resp.text}")
-        self._project_scope_cache[project_id] = set(updated_scope)
-        return resp.json()
+        """
+        Backwards-compatible helper to add assets to a project scope.
+        """
+        return self.add_assets_to_project(project_id, new_assets)
 
     def create_project(self, name: str, **kwargs) -> Dict[str, Any]:
         start, end = get_default_dates()
@@ -1414,15 +1817,15 @@ class PyAttackForgeClient:
             "sla_activation": kwargs.get("sla_activation", "automatic")
         }
         resp = self._request("post", "/api/ss/project", json_data=payload)
-        if resp.status_code in (200, 201):
-            return resp.json()
-        raise RuntimeError(f"Project creation failed: {resp.text}")
+        self._ensure_response(resp, (200, 201), "create project")
+        data = resp.json()
+        return self._unwrap(data, "project")
 
     def update_project(self, project_id: str, update_fields: Dict[str, Any]) -> Dict[str, Any]:
         resp = self._request("put", f"/api/ss/project/{project_id}", json_data=update_fields)
-        if resp.status_code in (200, 201):
-            return resp.json()
-        raise RuntimeError(f"Project update failed: {resp.text}")
+        self._ensure_response(resp, (200, 201), "update project")
+        data = resp.json()
+        return self._unwrap(data, "project")
 
     def create_writeup(
         self,
@@ -1443,11 +1846,10 @@ class PyAttackForgeClient:
         }
         payload.update(kwargs)
         resp = self._request("post", "/api/ss/library/vulnerability", json_data=payload)
-        if resp.status_code in (200, 201):
-            result = resp.json()
-            print("DEBUG: create_writeup API response:", result)
-            return result
-        raise RuntimeError(f"Writeup creation failed: {resp.text}")
+        self._ensure_response(resp, (200, 201), "create writeup")
+        data = resp.json()
+        data = self._unwrap(data, "vulnerability")
+        return self._unwrap(data, "writeup")
 
     def create_finding_from_writeup(
         self,
@@ -1481,20 +1883,15 @@ class PyAttackForgeClient:
             "priority": priority
         }
         if affected_assets is not None:
-            asset_names = [
-                asset["assetName"] if isinstance(asset, dict) and "assetName" in asset
-                else asset["name"] if isinstance(asset, dict) and "name" in asset
-                else asset
-                for asset in affected_assets
-            ]
-            payload["affected_assets"] = [{"assetName": n} for n in asset_names]
+            asset_payloads, _, _ = self._build_asset_payloads(affected_assets)
+            payload["affected_assets"] = asset_payloads
         if linked_testcases:
             payload["linked_testcases"] = linked_testcases
         payload.update(kwargs)
         resp = self._request("post", "/api/ss/vulnerability-with-library", json_data=payload)
-        if resp.status_code in (200, 201):
-            return resp.json()
-        raise RuntimeError(f"Finding creation from writeup failed: {resp.text}")
+        self._ensure_response(resp, (200, 201), "create finding from writeup")
+        data = resp.json()
+        return self._unwrap(data, "vulnerability")
 
     def create_vulnerability(
         self,
@@ -1549,20 +1946,14 @@ class PyAttackForgeClient:
         Returns:
             dict: Created vulnerability details.
         """
-        asset_names = []
-        for asset in affected_assets:
-            name = asset["assetName"] if isinstance(asset, dict) and "assetName" in asset \
-                else asset["name"] if isinstance(asset, dict) and "name" in asset \
-                else asset
-            self.get_asset_by_name(name)
-            asset_names.append(name)
+        asset_payloads, asset_names, asset_ids = self._build_asset_payloads(affected_assets)
         scope = self.get_project_scope(project_id)
         missing_in_scope = [n for n in asset_names if n not in scope]
-        if missing_in_scope:
-            self.update_project_scope(project_id, missing_in_scope)
+        if missing_in_scope or asset_ids:
+            self.add_assets_to_project(project_id, missing_in_scope or asset_names, asset_library_ids=asset_ids)
 
         finding_payload = {
-            "affected_assets": [{"assetName": n} for n in asset_names],
+            "affected_assets": asset_payloads,
             "likelihood_of_exploitation": likelihood_of_exploitation,
             "steps_to_reproduce": steps_to_reproduce,
             "tags": tags or [],
@@ -1580,8 +1971,8 @@ class PyAttackForgeClient:
         finding_payload = {k: v for k, v in finding_payload.items() if v is not None}
         resolved_writeup_id = writeup_id
         if not resolved_writeup_id:
-            self.get_all_writeups()
-            resolved_writeup_id = self.find_writeup_in_cache(title, "Main Vulnerabilities")
+            self.get_all_writeups(belongs_to_library=self.default_library)
+            resolved_writeup_id = self.find_writeup_in_cache(title, self.default_library)
             if not resolved_writeup_id:
                 writeup_fields = writeup_custom_fields[:] if writeup_custom_fields else []
                 if import_source:
@@ -1591,11 +1982,12 @@ class PyAttackForgeClient:
                     description=description,
                     remediation_recommendation=remediation_recommendation,
                     attack_scenario=attack_scenario,
+                    belongs_to_library=self.default_library,
                     custom_fields=writeup_fields
                 )
-                self.get_all_writeups(force_refresh=True)
+                self.get_all_writeups(force_refresh=True, belongs_to_library=self.default_library)
                 resolved_writeup_id = self.find_writeup_in_cache(
-                    title, "Main Vulnerabilities"
+                    title, self.default_library
                 )
                 if not resolved_writeup_id:
                     raise RuntimeError(
@@ -1608,6 +2000,63 @@ class PyAttackForgeClient:
             **finding_payload
         )
         return result
+
+    def _sha256_file(self, file_path: str) -> str:
+        digest = hashlib.sha256()
+        with open(file_path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _evidence_matches(
+        self,
+        evidence: Dict[str, Any],
+        basename: str,
+        file_size: int,
+        sha256: str
+    ) -> bool:
+        if not isinstance(evidence, dict):
+            return False
+        name_candidates = []
+        for key in (
+            "file_name_custom",
+            "file_name",
+            "name",
+            "filename",
+            "original_name",
+            "original_filename",
+            "file_name_original",
+            "fileName",
+            "originalName",
+        ):
+            value = evidence.get(key)
+            if value:
+                name_candidates.append(str(value))
+        if not name_candidates:
+            return False
+        name_match = False
+        for candidate in name_candidates:
+            if os.path.basename(candidate) == basename:
+                name_match = True
+                break
+        if not name_match:
+            return False
+        existing_size = (
+            evidence.get("file_size")
+            or evidence.get("size")
+            or evidence.get("file_size_bytes")
+        )
+        size_match = False
+        if existing_size is not None:
+            try:
+                size_match = int(existing_size) == int(file_size)
+            except (TypeError, ValueError):
+                size_match = False
+        existing_hash = evidence.get("sha256") or evidence.get("file_hash")
+        sha_match = False
+        if existing_hash:
+            sha_match = str(existing_hash).lower() == sha256.lower()
+        return size_match or sha_match
 
     def create_vulnerability_old(
         self,
@@ -1701,9 +2150,9 @@ class PyAttackForgeClient:
             payload["notes"] = notes
         payload = {k: v for k, v in payload.items() if v is not None}
         resp = self._request("post", "/api/ss/vulnerability", json_data=payload)
-        if resp.status_code in (200, 201):
-            return resp.json()
-        raise RuntimeError(f"Vulnerability creation failed: {resp.text}")
+        self._ensure_response(resp, (200, 201), "create vulnerability")
+        data = resp.json()
+        return self._unwrap(data, "vulnerability")
 
 
 class DummyResponse:

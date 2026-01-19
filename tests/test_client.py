@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import uuid
 from pyattackforge import PyAttackForgeClient
 
 
@@ -28,18 +29,20 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertIsInstance(project, dict)
 
     def test_create_user_dry_run(self):
+        password = f"PyAF-{uuid.uuid4().hex}!"
         user = self.client.create_user(
             first_name="John",
             last_name="Citizen",
             username="john.citizen@attackforge.com",
             email="john.citizen@attackforge.com",
-            password="ThisIsASuperLongPassword",
+            password=password,
             role="client",
             mfa="Yes",
         )
         self.assertIsInstance(user, dict)
 
     def test_create_users_dry_run(self):
+        password = f"PyAF-{uuid.uuid4().hex}!"
         users = self.client.create_users(
             [
                 {
@@ -47,7 +50,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
                     "last_name": "Citizen",
                     "username": "jane.citizen@attackforge.com",
                     "email": "jane.citizen@attackforge.com",
-                    "password": "ThisIsASuperLongPassword",
+                    "password": password,
                     "role": "consultant",
                     "mfa": "Yes",
                 }
@@ -59,7 +62,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
 
     def test_create_vulnerability_dry_run(self):
         self.client.get_all_writeups = (
-            lambda force_refresh=False: [
+            lambda *args, **kwargs: [
                 {
                     "title": "Test Vuln",
                     "belongs_to_library": "Main Vulnerabilities",
@@ -83,7 +86,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
 
     def test_create_vulnerability_with_import_source_and_writeup_custom_fields(self):
         self.client.get_all_writeups = (
-            lambda force_refresh=False: [
+            lambda *args, **kwargs: [
                 {
                     "title": "Test Vuln 2",
                     "belongs_to_library": "Main Vulnerabilities",
@@ -113,7 +116,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertIsInstance(vuln, dict)
 
     def test_create_vulnerability_with_existing_writeup_id(self):
-        self.client.get_all_writeups = lambda force_refresh=False: []
+        self.client.get_all_writeups = lambda *args, **kwargs: []
         self.client.find_writeup_in_cache = lambda title, library="Main Vulnerabilities": None
         captured = {"endpoints": []}
 
@@ -516,7 +519,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
     def test_upsert_finding_for_project_create(self):
         self.client.get_findings_for_project = lambda project_id: []
         self.client.get_all_writeups = (
-            lambda force_refresh=False: [
+            lambda *args, **kwargs: [
                 {
                     "title": "UnitTest Finding",
                     "belongs_to_library": "Main Vulnerabilities",
@@ -555,7 +558,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
         }
         self.client.get_findings_for_project = lambda project_id: [existing_finding]
         self.client.get_all_writeups = (
-            lambda force_refresh=False: [
+            lambda *args, **kwargs: [
                 {
                     "title": "UnitTest Finding",
                     "belongs_to_library": "Main Vulnerabilities",
@@ -619,13 +622,13 @@ class TestPyAttackForgeClient(unittest.TestCase):
                         return {"scope": ["AssetA", "AssetB"]}
 
                 return Resp()
-            if method == "put" and endpoint == "/api/ss/project/dummy_project":
+            if method == "post" and endpoint == "/api/ss/project/dummy_project/assets":
 
                 class Resp:
                     status_code = 200
 
                     def json(self):
-                        return {"scope": json_data.get("scope", [])}
+                        return {"assets": json_data.get("assets", [])}
 
                 return Resp()
             raise RuntimeError("Unexpected API call")
@@ -633,8 +636,8 @@ class TestPyAttackForgeClient(unittest.TestCase):
         scope = self.client.get_project_scope("dummy_project")
         self.assertSetEqual(scope, {"AssetA", "AssetB"})
         updated = self.client.update_project_scope("dummy_project", ["AssetC"])
-        self.assertIn("scope", updated)
-        self.assertIn("AssetC", updated["scope"])
+        self.assertIn("assets", updated)
+        self.assertIn("AssetC", updated["assets"])
 
     def test_create_writeup_missing_required_fields(self):
         with self.assertRaises(ValueError):
@@ -861,6 +864,38 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertEqual(captured["existing_linked_vulnerabilities"], ["existing"])
         self.assertEqual(captured["vulnerability_ids"], ["new1", "new2"])
         self.assertEqual(captured["additional_fields"], {"status": "Tested"})
+
+    def test_get_project_by_id_unwraps(self):
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"project": {"id": "p-1", "project_name": "Proj"}}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            return Resp()
+
+        self.client._request = fake_request
+        project = self.client.get_project_by_id("p-1")
+        self.assertEqual(project.get("id"), "p-1")
+        self.assertEqual(project.get("project_name"), "Proj")
+
+    def test_get_vulnerability_unwraps(self):
+        class Resp:
+            status_code = 200
+            text = "OK"
+
+            def json(self):
+                return {"vulnerability": {"id": "v-1", "vulnerability_title": "Title"}}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            return Resp()
+
+        self.client._request = fake_request
+        vuln = self.client.get_vulnerability("v-1")
+        self.assertEqual(vuln.get("id"), "v-1")
+        self.assertEqual(vuln.get("vulnerability_title"), "Title")
 
 
 if __name__ == "__main__":

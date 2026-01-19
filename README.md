@@ -12,7 +12,7 @@ A lightweight Python library for interacting with the AttackForge API.
 - Submit vulnerabilities
 - Create findings from existing writeups by passing a `writeup_id`
 - Upload evidence to findings or testcases
-- Update/assign testcases to link findings or add notes
+- Manage testcases (create/update/delete, notes, evidence, linking)
 - Link vulnerabilities to testcases via the client
 - Dry-run mode for testing
 
@@ -31,10 +31,15 @@ A lightweight Python library for interacting with the AttackForge API.
 ## Use
 
    ```python
+   import os
    from pyattackforge import PyAttackForgeClient
 
-   # Initialize client - Note: Make sure to set your AttackForge URL and API Key
-   client = PyAttackForgeClient(api_key="your-api-key", base_url="https://demo.attackforge.com", dry_run=False)
+   # Initialize client - Note: load credentials from env vars
+   client = PyAttackForgeClient(
+       api_key=os.getenv("ATTACKFORGE_SSAPI_KEY", ""),
+       base_url=os.getenv("ATTACKFORGE_BASE_URL", "https://demo.attackforge.com"),
+       dry_run=False,
+   )
 
    # Create a project
    project = client.create_project("My Project", scope=["Asset1", "Asset2"])
@@ -107,12 +112,14 @@ client.create_finding_from_writeup(
 
 Create a user:
 ```python
+import os
+
 client.create_user(
     first_name="John",
     last_name="Citizen",
     username="john.citizen@attackforge.com",
     email="john.citizen@attackforge.com",
-    password="ThisIsASuperLongPassword",
+    password=os.getenv("ATTACKFORGE_USER_PASSWORD", ""),
     role="client",
     mfa="Yes",
 )
@@ -195,9 +202,31 @@ client.link_vulnerability_to_testcases(
 )
 ```
 
+Create a testcase:
+```python
+client.create_testcase(
+    project_id="abc123",
+    testcase="Credentialed authentication check",
+    details="Validate MFA is enforced for admin accounts.",
+    status="Not Started",
+    tags=["auth", "mfa"]
+)
+```
+
+Delete a testcase:
+```python
+client.delete_testcase(
+    project_id="abc123",
+    testcase_id="5e8017d2e1385f0c58e8f4f8"
+)
+```
+
 Fetch project testcases:
 ```python
 testcases = client.get_testcases("abc123")
+```
+```python
+testcases = client.get_testcases("abc123", params={"skip": 0, "limit": 100})
 ```
 
 Fetch a single testcase (if supported in your tenant):
@@ -289,8 +318,11 @@ See the source code for full details and docstrings.
 - `add_note_to_finding(vulnerability_id: str, note: Any, note_type: str = "PLAINTEXT") -> dict`
 - `upload_finding_evidence(vulnerability_id: str, file_path: str) -> dict`
 - `upload_testcase_evidence(project_id: str, testcase_id: str, file_path: str) -> dict`
-- `get_testcases(project_id: str) -> list`
+- `get_testcases(project_id: str, params: Optional[Dict[str, Any]] = None) -> list`
 - `get_testcase(project_id: str, testcase_id: str) -> dict or None`
+- `create_testcase(project_id: str, testcase: str, details: Optional[str] = None, status: Optional[str] = None, tags: Optional[List[str]] = None, **kwargs) -> dict`
+- `update_testcase(project_id: str, testcase_id: str, update_fields: Dict[str, Any]) -> dict`
+- `delete_testcase(project_id: str, testcase_id: str) -> dict`
 - `link_vulnerability_to_testcases(vulnerability_id: str, testcase_ids: List[str], project_id: Optional[str] = None) -> dict`
 - `assign_findings_to_testcase(project_id: str, testcase_id: str, vulnerability_ids: List[str], existing_linked_vulnerabilities: Optional[List[str]] = None, additional_fields: Optional[Dict[str, Any]] = None) -> dict`
 - `add_findings_to_testcase(project_id: str, testcase_id: str, vulnerability_ids: List[str], additional_fields: Optional[Dict[str, Any]] = None) -> dict`
