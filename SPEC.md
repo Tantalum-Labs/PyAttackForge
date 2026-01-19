@@ -41,11 +41,10 @@ Optional:
 - `PYATTACKFORGE_RUN_USER_MUTATION_TESTS` (default: 0; opt-in)
 - `PYATTACKFORGE_BELONGS_TO_LIBRARY` (default: "Main Vulnerabilities")
 - `PYATTACKFORGE_CLEANUP` (default: 1; remove testcases and test evidence when possible)
+- `PYATTACKFORGE_ARTIFACT_DIR` (default: `.codex/artifacts`; where live tests write report.json and sample evidence)
 
 ## Endpoint-specific request validation (required)
-
 For SSAPI calls that return VALIDATION_FAILED, implement endpoint-local validation:
-
 - Add a helper per endpoint (or a shared helper with endpoint name), e.g.:
   - normalize_testcase_status(status: str) -> str
 - The helper must:
@@ -62,6 +61,7 @@ Rule of scope:
 Implement consistent unwrapping so callers can safely treat returned objects as:
 - project dict (not `{ "project": ... }`)
 - vulnerability dict (not `{ "vulnerability": ... }`)
+- testcase dict (must include top-level `id` when created)
 - user dict, etc., where applicable
 
 Add a small internal helper:
@@ -70,6 +70,7 @@ Add a small internal helper:
 Update methods that currently return wrapped objects:
 - `get_project_by_id`
 - `get_vulnerability`
+- `create_testcase` (must return a dict with `id`)
 - Any other methods returning `{ "X": {...} }`
 
 ### B) Implement create_asset (library asset creation)
@@ -88,9 +89,8 @@ If the asset already exists, the method should:
 Replace or supplement any undocumented scope update logic with documented behavior:
 - Add assets to a project using CreateScope:
   `POST /api/ss/project/:id/assets`
-This may take asset names and optionally `asset_library_ids` for mapping (if Assets module is enabled).
 
-Ensure `create_vulnerability()` can:
+Ensure finding creation/upsert can:
 - Ensure affected assets are in project scope before creating the vulnerability
 - Work whether assets are represented by name or asset_id (assets module)
 
@@ -103,18 +103,18 @@ Cache should be:
 
 Default library should be `Main Vulnerabilities` unless configured.
 
-### E) Evidence upload de-dupe
-Update `upload_finding_evidence()` to prevent duplicates by default:
-- Fetch vulnerability (`get_vulnerability(vuln_id)`)
-- Inspect `vulnerability_evidence` list
-- If an evidence item already exists with same `file_name_custom` (or same basename) AND same size (or same sha256), skip upload
+### E) Evidence upload de-dupe (finding and testcase)
+Finding evidence de-dupe:
+- Before uploading, fetch existing evidence list for the finding (vulnerability_evidence)
+- If an evidence item already exists with same filename AND same size (bytes), skip upload
+- Print/log exactly:
+  - `SKIP evidence (already exists): <filename> (<size> bytes)`
+- Return a structured result indicating uploaded/skipped and reason.
 
-Add an override flag:
-- `dedupe=True` default
-- If `dedupe=False`, always upload
-
-When cleanup is enabled, delete test evidence using:
-- `DELETE /api/ss/vulnerability/:id/evidence/:file` (storage_name)
+Testcase evidence de-dupe (when attaching to testcase):
+- Before uploading, list existing testcase files
+- If filename AND size match, skip upload
+- Record the skip in report.json and log a skip line.
 
 ### F) Remove insecure/outdated sample scripts
 The root-level test scripts that embed credentials or use outdated method signatures must be removed or rewritten to:
@@ -137,125 +137,49 @@ Given env vars are set and access is granted:
 1) Connectivity + permissions smoke test
 - Call a lightweight endpoint (e.g. get_project_by_id) and assert response contains expected fields.
 
-2) Writeup lookup + create if missing
-- Ensure writeup can be found or created in the configured library.
+2) Writeup lookup
+- Find an existing writeup (preferred: "Open port detected" in the configured library), or create a minimal writeup if missing.
 
-3) Create finding from writeup on a real project
-- Create vulnerability using `create_finding_from_writeup` / `create_vulnerability`
-- Assert created vulnerability id is returned and can be fetched
+3) Finding upsert idempotency + asset append
+- Upsert finding once (asset A) => created
+- Upsert same finding again (asset A) => deduped (same id)
+- Upsert same finding again (asset B) => deduped (same id) and asset B appended
+- Verify via get/list that only ONE finding exists for the run_id/title
+- Verify assets include A and B
 
-4) Update finding
-- Call `update_finding` and verify fields changed (title/tag/notes/etc)
+4) Evidence upload idempotency using PNG evidence
+- Generate a small PNG file as evidence and upload once => uploaded
+- Upload the same PNG again => skipped as duplicate (filename+size)
+- Generate a different-sized PNG and upload => uploaded
 
-5) Evidence upload idempotency
-- Upload a small test file once
-- Confirm evidence count increased by 1
-- Upload the same file again with dedupe enabled
-- Confirm evidence count did NOT increase
-- Optionally clean up evidence (delete by storage_name)
-
-6) Testcase flow (if enabled for that project)
+5) Testcase linkage
 - Create a testcase
-- Update testcase
-- Link finding(s) to testcase
-- Delete testcase (cleanup)
+- Link the finding to the testcase
+- Verify linkage via GET testcase
 
-User mutation tests:
-- Only run when `PYATTACKFORGE_RUN_USER_MUTATION_TESTS=1`
+6) Testcase notes + evidence on attach (idempotent)
+- Attach the finding to testcase with a note and a PNG evidence file => created
+- Repeat the attach with identical note and identical PNG => skip duplicates (note and evidence)
+- Verify exactly one matching note exists and exactly one matching file exists
 
-### Cleanup
-Default behavior:
-- Clean up testcases created by tests
-- Clean up evidence created by tests (when delete evidence is permitted)
-Vulnerabilities/findings may not always be safely deletable; if no delete is supported, keep them but label them clearly:
-- Title prefix: `PYAF-CI <run_id> - ...`
-- Add note: `Created by PyAttackForge CI`
+### Test artifacts & reporting (required)
+Live tests must produce a clear report per run:
+- Directory: `.codex/artifacts/<RUN_ID>/`
+- Required: `report.json`
+
+report.json must record:
+- created IDs (finding_id, testcase_id)
+- dedupe decisions (deduped vs created)
+- evidence decisions (uploaded vs skipped) with filename + size
+- linkage verification result
+
+Evidence used in tests must be generated PNGs (Pillow) stored under the run artifact directory.
 
 ## Acceptance Criteria
 With live tests enabled (`PYATTACKFORGE_LIVE=1`) and valid sandbox credentials:
 - `./ci.sh` exits 0
-- All live tests pass (no skips due to missing env)
-- Evidence de-dupe test proves no duplicate evidence is uploaded
+- Live tests pass and generate `.codex/artifacts/<RUN_ID>/report.json`
+- Duplicate finding behavior is proven via API assertions (count==1 for the run title) and recorded in report.json
+- Duplicate evidence behavior is proven using PNG files (filename+size) and recorded in report.json
 - No secrets exist in the repo (keys/configs removed or sanitized)
-- Client methods return correct unwrapped objects consistent with official SSAPI response shapes
-
-## Idempotency and linkage requirements (must implement + test)
-
-All behaviors below must be validated via live SSAPI integration tests (pytest marker: live) against the sandbox project.
-
-### Definitions
-
-#### Finding de-duplication key (required)
-Two findings are considered the “same finding” (duplicates) if they share ALL of:
-- project_id
-- writeup identifier (preferred: vulnerability library issue id OR writeup title + belongs_to_library)
-- finding title (canonical writeup title)
-
-Assets are NOT part of the de-duplication key.
-
-#### Asset append rule (required)
-If a second “duplicate” finding submission differs only by assets, the client must:
-- re-use the existing finding
-- append any missing assets to the existing finding’s affected assets/scope representation
-- return the existing finding id
-
-#### Evidence de-duplication key (required)
-Evidence is a duplicate if BOTH match:
-- filename (exact match)
-- size in bytes (exact match)
-
-If filename+size already exists on the finding, skip uploading and log:
-- "SKIP evidence (already exists): <filename> (<size> bytes)"
-
-### Required client features
-
-#### A) Upsert finding (required)
-Add a high-level method:
-- upsert_finding_from_writeup(..., assets=[...], dedupe=True, append_assets=True)
-
-Behavior:
-1) Find an existing matching finding in the sandbox project (by de-dup key).
-2) If found:
-   - if append_assets: ensure all requested assets are present on the finding/project scope
-   - return existing finding id and a result indicating "deduped"
-3) If not found:
-   - create the finding and return the new id
-
-The method must not create duplicate findings for the same de-dup key.
-
-#### B) Evidence upload de-dupe (required)
-Update upload_finding_evidence(..., dedupe=True):
-- Before upload, fetch existing evidence list for the finding
-- If filename+size exists already, skip upload and log as specified
-- Return a structured result indicating uploaded/skipped
-
-#### C) Finding ↔ testcase linkage (required)
-Add/validate a method:
-- link_finding_to_testcase(project_id, testcase_id, finding_id)
-
-Must be verifiable via follow-up GET:
-- fetch testcase and confirm the finding is linked (preferred)
-or
-- fetch finding and confirm testcase linkage (acceptable)
-
-#### D) When attaching a finding to a testcase, add testcase notes + evidence (idempotent)
-Add a high-level helper:
-- attach_finding_to_testcase_with_notes_and_evidence(...)
-
-Behavior:
-- Link finding to testcase
-- Add a testcase note that references the finding
-- Upload testcase evidence (optional parameter)
-- Do not duplicate:
-  - note (same text)
-  - evidence (same filename+size)
-- Log skips similarly to evidence skip messaging
-
-### Live test constraints
-- Every live run must use a unique RUN_ID prefix: "PYAF-CI-<timestamp>-<suffix>"
-- All created objects (finding title, testcase title, note content, evidence filenames) must include RUN_ID.
-- Cleanup is preferred:
-  - delete testcases created by tests (if SSAPI supports)
-  - delete evidence created by tests (if permitted)
-  - findings may be left if deletion isn’t supported; they must remain uniquely identifiable by RUN_ID.
-
+- Client methods return correct unwrapped objects consistent with SSAPI response shapes

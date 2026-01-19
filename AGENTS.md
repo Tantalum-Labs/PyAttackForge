@@ -36,3 +36,13 @@ API validation errors (endpoint-specific):
 - Do NOT apply endpoint-specific constraints globally unless the docs explicitly state they are global.
 - Do NOT brute-force retry random values. Use the details/pattern/enum from the API response or the local docs cache.
 
+Testing/reporting rules:
+- Live tests must write a per-run report to .codex/artifacts/<RUN_ID>/report.json with:
+  - created IDs (finding_id, testcase_id, evidence storage/name where available)
+  - dedupe decisions (deduped vs created, skipped evidence vs uploaded)
+  - linkage verification results
+- Prefer verifiable assertions via SSAPI (list/get) over manual UI inspection.
+- When adding coverage, include both:
+  1) an API assertion (count/ids/fields)
+  2) a report event recording the IDs and decisions.
+- Evidence used in tests must include generated PNG files (via Pillow) to exercise binary upload paths.

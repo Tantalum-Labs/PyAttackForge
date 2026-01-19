@@ -140,7 +140,16 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertEqual(vuln.get("writeup_id"), "writeup-123")
         self.assertEqual(captured.get("writeup_id"), "writeup-123")
         assets = captured.get("affected_assets", [])
-        self.assertEqual(assets, [{"name": "AssetExisting", "assetName": "AssetExisting"}])
+        self.assertEqual(
+            assets,
+            [
+                {
+                    "name": "AssetExisting",
+                    "assetName": "AssetExisting",
+                    "affected_asset_name": "AssetExisting",
+                }
+            ],
+        )
 
     def test_create_vulnerability_old_dry_run(self):
         vuln = self.client.create_vulnerability_old(
@@ -161,6 +170,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
             title="SQL Injection",
             description="SQLi description",
             remediation_recommendation="Sanitize inputs",
+            attack_scenario="Demonstrated SQL injection via user input",
             custom_fields=[
                 {
                     "key": "references",
@@ -644,20 +654,59 @@ class TestPyAttackForgeClient(unittest.TestCase):
             self.client.create_writeup(
                 title="",
                 description="desc",
-                remediation_recommendation="remed"
+                remediation_recommendation="remed",
+                attack_scenario="scenario"
             )
         with self.assertRaises(ValueError):
             self.client.create_writeup(
                 title="Title",
                 description="",
-                remediation_recommendation="remed"
+                remediation_recommendation="remed",
+                attack_scenario="scenario"
             )
         with self.assertRaises(ValueError):
             self.client.create_writeup(
                 title="Title",
                 description="desc",
-                remediation_recommendation=""
+                remediation_recommendation="",
+                attack_scenario="scenario"
             )
+        with self.assertRaises(ValueError):
+            self.client.create_writeup(
+                title="Title",
+                description="desc",
+                remediation_recommendation="remed",
+                attack_scenario=""
+            )
+
+    def test_create_writeup_normalizes_payload(self):
+        captured = {}
+
+        def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
+            captured["json"] = json_data
+
+            class Resp:
+                status_code = 200
+                text = "OK"
+
+                def json(self):
+                    return {}
+
+            return Resp()
+
+        self.client._request = fake_request
+        self.client.create_writeup(
+            title="Title",
+            description="desc",
+            remediation_recommendation="remed",
+            attackScenario="scenario via alias",
+            belongs_to_library="Main Vulnerabilities",
+        )
+        payload = captured.get("json") or {}
+        self.assertEqual(payload.get("attack_scenario"), "scenario via alias")
+        self.assertEqual(payload.get("import_to_library"), "Main Vulnerabilities")
+        self.assertNotIn("attackScenario", payload)
+        self.assertNotIn("belongs_to_library", payload)
 
     def test_dummy_response(self):
         from pyattackforge.client import DummyResponse
@@ -757,9 +806,21 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertEqual(
             payload["affected_assets"],
             [
-                {"name": "asset-a", "assetName": "asset-a"},
-                {"name": "asset-b", "assetName": "asset-b"},
-                {"name": "asset-c", "assetName": "asset-c"},
+                {
+                    "name": "asset-a",
+                    "assetName": "asset-a",
+                    "affected_asset_name": "asset-a",
+                },
+                {
+                    "name": "asset-b",
+                    "assetName": "asset-b",
+                    "affected_asset_name": "asset-b",
+                },
+                {
+                    "name": "asset-c",
+                    "assetName": "asset-c",
+                    "affected_asset_name": "asset-c",
+                },
             ],
         )
         self.assertEqual(payload["notes"], [{"note": "n1", "type": "PLAINTEXT"}])
@@ -776,7 +837,16 @@ class TestPyAttackForgeClient(unittest.TestCase):
             extra_fields={"title": "New Title"},
         )
         self.assertEqual(params, {"projectId": "proj-123"})
-        self.assertEqual(payload["affected_assets"], [{"name": "asset-a", "assetName": "asset-a"}])
+        self.assertEqual(
+            payload["affected_assets"],
+            [
+                {
+                    "name": "asset-a",
+                    "assetName": "asset-a",
+                    "affected_asset_name": "asset-a",
+                }
+            ],
+        )
         self.assertEqual(payload["notes"], [{"note": "n1", "type": "PLAINTEXT"}])
         self.assertEqual(payload["title"], "New Title")
 
