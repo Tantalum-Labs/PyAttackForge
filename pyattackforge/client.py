@@ -61,10 +61,10 @@ class PyAttackForgeClient:
         for asset in affected_assets or []:
             if isinstance(asset, dict):
                 nested_asset = asset.get("asset") if isinstance(asset.get("asset"), dict) else {}
-                name = asset.get("assetName") or asset.get("name")
+                name = asset.get("assetName") or asset.get("asset_name") or asset.get("name")
                 if not name:
                     if isinstance(asset.get("asset"), dict):
-                        name = nested_asset.get("name") or nested_asset.get("asset")
+                        name = nested_asset.get("name") or nested_asset.get("asset") or nested_asset.get("asset_name")
                     else:
                         name = asset.get("asset")
                 asset_id = (
@@ -86,6 +86,7 @@ class PyAttackForgeClient:
                     asset_ids.append(str(asset_id))
                 payload: Dict[str, Any] = {}
                 if name:
+                    payload["name"] = name
                     payload["assetName"] = name
                 if asset_id:
                     payload["assetId"] = asset_id
@@ -94,8 +95,576 @@ class PyAttackForgeClient:
                 if asset is None:
                     continue
                 asset_names.append(str(asset))
-                payloads.append({"assetName": asset})
+                payloads.append({"name": asset, "assetName": asset})
         return payloads, asset_names, asset_ids
+
+    def _build_update_finding_payload(
+        self,
+        project_id: Optional[str],
+        affected_assets: Optional[list],
+        notes: Optional[list],
+        extra_fields: Optional[Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        payload: Dict[str, Any] = {}
+        params: Optional[Dict[str, Any]] = None
+        if project_id:
+            params = {"projectId": project_id}
+        if affected_assets is not None:
+            asset_payloads, _, _ = self._build_asset_payloads(affected_assets)
+            payload["affected_assets"] = asset_payloads
+        if notes is not None:
+            payload["notes"] = notes
+        for key, value in (extra_fields or {}).items():
+            if value is not None:
+                payload[key] = value
+        return payload, params
+
+    def _cache_vulnerability_evidence(self, vulnerability_id: str, basename: str, file_size: int) -> None:
+        if not vulnerability_id or not basename or file_size is None:
+            return
+        cache = self._vulnerability_evidence_cache.setdefault(str(vulnerability_id), set())
+        cache.add((str(basename), int(file_size)))
+
+    def _cache_testcase_evidence(
+        self, project_id: str, testcase_id: str, basename: str, file_size: int
+    ) -> None:
+        if not project_id or not testcase_id or not basename or file_size is None:
+            return
+        key = (str(project_id), str(testcase_id))
+        cache = self._testcase_evidence_cache.setdefault(key, set())
+        cache.add((str(basename), int(file_size)))
+
+    def _cache_testcase_link(self, project_id: str, testcase_id: str, finding_id: str) -> None:
+        if not project_id or not testcase_id or not finding_id:
+            return
+        key = (str(project_id), str(testcase_id))
+        cache = self._testcase_link_cache.setdefault(key, set())
+        cache.add(str(finding_id))
+
+    def _normalize_testcase_status(self, status: Any) -> str:
+        if status is None:
+            raise ValueError("Testcase status cannot be empty")
+        raw = str(status).strip()
+        if not raw:
+            raise ValueError("Testcase status cannot be empty")
+        key = " ".join(raw.lower().replace("_", " ").replace("-", " ").split())
+        canonical = {
+            "tested": "Tested",
+            "testing in progress": "Testing In Progress",
+            "not tested": "Not Tested",
+            "not applicable": "Not Applicable",
+        }
+        aliases = {
+            "not started": "Not Tested",
+            "in progress": "Testing In Progress",
+            "n/a": "Not Applicable",
+            "na": "Not Applicable",
+        }
+        if key in aliases:
+            return aliases[key]
+        if key in canonical:
+            return canonical[key]
+        allowed = ", ".join(canonical.values())
+        raise ValueError(f"Unsupported testcase status '{status}'. Allowed: {allowed}")
+
+    def _normalize_testcase_payload(self, testcase: Any) -> Any:
+        if not isinstance(testcase, dict):
+            return testcase
+        outer = testcase
+        for key in (
+            "testcase",
+            "project_testcase",
+            "projectTestcase",
+            "project_test_case",
+        ):
+            if isinstance(outer.get(key), dict):
+                testcase = dict(outer.get(key) or {})
+                for extra_key in (
+                    "testcase_notes",
+                    "notes",
+                    "testcaseNotes",
+                    "project_testcase_notes",
+                    "testcase_note",
+                    "files",
+                    "testcase_files",
+                    "testcaseFiles",
+                    "project_testcase_files",
+                    "projectTestcaseFiles",
+                    "uploaded_files",
+                    "attachments",
+                    "evidence",
+                    "testcase_evidence",
+                    "linked_vulnerabilities",
+                    "linked_findings",
+                    "linked_vulnerability_ids",
+                    "linked_vulnerability_id",
+                ):
+                    if extra_key not in testcase and extra_key in outer:
+                        testcase[extra_key] = outer.get(extra_key)
+                break
+        if not testcase.get("id"):
+            for key in (
+                "_id",
+                "project_testcase_id",
+                "project_test_case_id",
+                "projectTestcaseId",
+                "testcase_id",
+                "testcaseId",
+            ):
+                value = testcase.get(key)
+                if value:
+                    testcase["id"] = value
+                    break
+        else:
+            project_id = (
+                testcase.get("project_testcase_id")
+                or testcase.get("project_test_case_id")
+                or testcase.get("projectTestcaseId")
+            )
+            if project_id and testcase.get("id") in (
+                testcase.get("testcase_id"),
+                testcase.get("testcaseId"),
+            ):
+                testcase["id"] = project_id
+        return testcase
+
+    def _normalize_vulnerability_payload(self, vulnerability: Any) -> Any:
+        if not isinstance(vulnerability, dict):
+            return vulnerability
+        outer = vulnerability
+        if isinstance(outer.get("vulnerability"), dict):
+            vulnerability = dict(outer.get("vulnerability") or {})
+            for extra_key in (
+                "vulnerability_evidence",
+                "vulnerabilityEvidence",
+                "evidence",
+                "evidences",
+                "files",
+                "attachments",
+                "vulnerability_affected_assets",
+                "affected_assets",
+                "affectedAssets",
+                "assets",
+                "affected_asset",
+                "affectedAsset",
+                "vulnerability_affected_asset_name",
+                "affected_asset_name",
+                "asset_name",
+            ):
+                if extra_key not in vulnerability and extra_key in outer:
+                    vulnerability[extra_key] = outer.get(extra_key)
+        for extra_key in (
+            "vulnerability_affected_assets",
+            "affected_assets",
+            "affectedAssets",
+            "assets",
+            "affected_asset",
+            "affectedAsset",
+            "vulnerability_affected_asset_name",
+            "affected_asset_name",
+            "asset_name",
+        ):
+            if extra_key not in vulnerability and extra_key in outer:
+                vulnerability[extra_key] = outer.get(extra_key)
+        if not vulnerability.get("id"):
+            for key in ("vulnerability_id", "vulnerabilityId", "_id"):
+                value = vulnerability.get(key)
+                if value:
+                    vulnerability["id"] = value
+                    break
+        if isinstance(vulnerability.get("vulnerability_evidence"), dict):
+            vulnerability["vulnerability_evidence"] = [vulnerability["vulnerability_evidence"]]
+        if not vulnerability.get("vulnerability_evidence"):
+            for key in (
+                "vulnerabilityEvidence",
+                "evidence",
+                "evidences",
+                "files",
+                "attachments",
+            ):
+                value = vulnerability.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, list):
+                    vulnerability["vulnerability_evidence"] = value
+                elif isinstance(value, dict):
+                    vulnerability["vulnerability_evidence"] = [value]
+                else:
+                    vulnerability["vulnerability_evidence"] = []
+                break
+        return vulnerability
+
+    def _extract_vulnerability_id(self, payload: Any) -> Optional[str]:
+        if not payload:
+            return None
+        if isinstance(payload, dict) and "vulnerability" in payload:
+            payload = payload.get("vulnerability")
+        if isinstance(payload, dict):
+            for key in ("vulnerability_id", "vulnerabilityId", "id", "_id"):
+                value = payload.get(key)
+                if value:
+                    return str(value)
+        return None
+
+    def _extract_writeup_identity(
+        self,
+        writeup: Any,
+        title: Optional[str] = None,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        writeup_id = None
+        library = None
+        resolved_title = title
+        if isinstance(writeup, dict):
+            for key in (
+                "reference_id",
+                "id",
+                "_id",
+                "vulnerability_library_id",
+                "vulnerability_library_issue_id",
+            ):
+                value = writeup.get(key)
+                if value:
+                    writeup_id = str(value)
+                    break
+            resolved_title = (
+                resolved_title
+                or writeup.get("title")
+                or writeup.get("vulnerability_title")
+                or writeup.get("name")
+            )
+            library = (
+                writeup.get("belongs_to_library")
+                or writeup.get("library")
+                or writeup.get("library_name")
+            )
+        elif isinstance(writeup, str):
+            writeup_id = writeup
+        return writeup_id, resolved_title, library
+
+    def _extract_asset_payloads_from_finding(
+        self,
+        finding: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        payloads: List[Dict[str, Any]] = []
+        if not isinstance(finding, dict):
+            return payloads
+        raw_assets = (
+            finding.get("vulnerability_affected_assets")
+            or finding.get("affected_assets")
+            or finding.get("affectedAssets")
+            or finding.get("assets")
+            or finding.get("affected_asset")
+            or finding.get("affectedAsset")
+            or []
+        )
+        if isinstance(raw_assets, dict):
+            raw_assets = [raw_assets]
+        for asset in raw_assets:
+            if isinstance(asset, dict):
+                name = asset.get("assetName") or asset.get("asset_name") or asset.get("name") or asset.get("asset")
+                asset_id = (
+                    asset.get("assetId")
+                    or asset.get("asset_id")
+                    or asset.get("asset_library_id")
+                    or asset.get("id")
+                )
+                if not asset_id and isinstance(asset.get("asset"), dict):
+                    nested = asset.get("asset") or {}
+                    name = name or nested.get("name") or nested.get("asset") or nested.get("asset_name")
+                    asset_id = (
+                        asset_id
+                        or nested.get("assetId")
+                        or nested.get("asset_id")
+                        or nested.get("asset_library_id")
+                        or nested.get("id")
+                    )
+                payload: Dict[str, Any] = {}
+                if name:
+                    payload["name"] = name
+                    payload["assetName"] = name
+                if asset_id:
+                    payload["assetId"] = asset_id
+                payloads.append(payload or asset)
+            elif isinstance(asset, str):
+                payloads.append({"name": asset, "assetName": asset})
+        for key in (
+            "vulnerability_affected_asset_name",
+            "affected_asset_name",
+            "affectedAssetName",
+            "asset_name",
+        ):
+            value = finding.get(key)
+            if value:
+                payloads.append({"name": value, "assetName": value})
+        return payloads
+
+    def _merge_asset_payloads(
+        self,
+        existing: List[Dict[str, Any]],
+        new: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for payload in existing + new:
+            if isinstance(payload, dict):
+                key = payload.get("assetId") or payload.get("assetName") or payload.get("name") or payload.get("asset")
+                if key:
+                    key_value = str(key)
+                    if key_value in seen:
+                        continue
+                    seen.add(key_value)
+            merged.append(payload)
+        return merged
+
+    def _append_assets_to_finding(
+        self,
+        project_id: str,
+        finding_id: Optional[str],
+        asset_payloads: List[Dict[str, Any]],
+        existing_finding: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        if not finding_id or not asset_payloads:
+            return False
+        vuln = existing_finding or {}
+        if not isinstance(vuln, dict) or not vuln:
+            try:
+                vuln = self.get_vulnerability(finding_id)
+            except Exception:
+                vuln = {}
+        existing_payloads = self._extract_asset_payloads_from_finding(vuln)
+        existing_keys = {
+            str(p.get("assetId") or p.get("assetName") or p.get("name") or p.get("asset"))
+            for p in existing_payloads
+            if isinstance(p, dict)
+            and (p.get("assetId") or p.get("assetName") or p.get("name") or p.get("asset"))
+        }
+        new_keys = {
+            str(p.get("assetId") or p.get("assetName") or p.get("name") or p.get("asset"))
+            for p in asset_payloads
+            if isinstance(p, dict)
+            and (p.get("assetId") or p.get("assetName") or p.get("name") or p.get("asset"))
+        }
+        if not new_keys - existing_keys:
+            return False
+        merged_assets = self._merge_asset_payloads(existing_payloads, asset_payloads)
+        self.update_finding(
+            vulnerability_id=finding_id,
+            project_id=project_id,
+            affected_assets=merged_assets,
+        )
+        return True
+
+    def _collect_writeup_ids_from_finding(self, finding: Dict[str, Any]) -> Set[str]:
+        ids: Set[str] = set()
+        if not isinstance(finding, dict):
+            return ids
+        for key in (
+            "vulnerability_library_issue_id",
+            "vulnerability_library_id",
+            "vulnerability_library_reference_id",
+            "vulnerability_library_issue_reference_id",
+            "vulnerabilityLibraryIssueId",
+            "vulnerabilityLibraryId",
+            "vulnerabilityLibraryReferenceId",
+            "vulnerabilityLibraryIssueReferenceId",
+            "library_issue_reference_id",
+            "libraryIssueReferenceId",
+            "library_issue_id",
+            "libraryIssueId",
+            "reference_id",
+            "referenceId",
+            "library_reference_id",
+            "libraryReferenceId",
+        ):
+            value = finding.get(key)
+            if value:
+                ids.add(str(value))
+        nested = (
+            finding.get("vulnerability_library_issue")
+            or finding.get("vulnerabilityLibraryIssue")
+            or finding.get("library_issue")
+            or finding.get("writeup")
+        )
+        if isinstance(nested, dict):
+            for key in ("reference_id", "id", "_id"):
+                value = nested.get(key)
+                if value:
+                    ids.add(str(value))
+        elif isinstance(nested, str):
+            ids.add(nested)
+        return ids
+
+    def _collect_writeup_ids_from_writeup(self, writeup: Any) -> Set[str]:
+        ids: Set[str] = set()
+        if isinstance(writeup, dict):
+            for key in (
+                "reference_id",
+                "referenceId",
+                "id",
+                "_id",
+                "vulnerability_library_id",
+                "vulnerability_library_issue_id",
+                "vulnerabilityLibraryId",
+                "vulnerabilityLibraryIssueId",
+                "vulnerability_library_issue_reference_id",
+                "vulnerability_library_issue_referenceId",
+                "vulnerabilityLibraryIssueReferenceId",
+                "library_issue_reference_id",
+                "libraryIssueReferenceId",
+            ):
+                value = writeup.get(key)
+                if value:
+                    ids.add(str(value))
+            nested = (
+                writeup.get("vulnerability_library_issue")
+                or writeup.get("library_issue")
+                or writeup.get("writeup")
+            )
+            if isinstance(nested, dict):
+                for key in ("reference_id", "referenceId", "id", "_id"):
+                    value = nested.get(key)
+                    if value:
+                        ids.add(str(value))
+            elif isinstance(nested, str):
+                ids.add(nested)
+        elif isinstance(writeup, str):
+            ids.add(writeup)
+        return ids
+
+    def _finding_title_matches(self, finding: Any, expected_title: Optional[str]) -> bool:
+        if not expected_title or not isinstance(finding, dict):
+            return False
+        for key in ("vulnerability_title", "title", "vulnerabilityTitle", "name"):
+            value = finding.get(key)
+            if value is not None and str(value) == str(expected_title):
+                return True
+        return False
+
+    def _finding_matches_writeup(
+        self,
+        finding: Dict[str, Any],
+        writeup_id: Optional[Any],
+        writeup_title: Optional[str],
+        library: Optional[str],
+    ) -> bool:
+        if writeup_id:
+            ids_to_match: Set[str] = set()
+            if isinstance(writeup_id, (list, set, tuple)):
+                for value in writeup_id:
+                    if value:
+                        ids_to_match.add(str(value))
+            else:
+                ids_to_match.add(str(writeup_id))
+            if ids_to_match and ids_to_match.intersection(self._collect_writeup_ids_from_finding(finding)):
+                return True
+        if not writeup_title:
+            return False
+        title_candidates: List[str] = []
+        for key in (
+            "vulnerability_library_issue_title",
+            "writeup_title",
+            "library_issue_title",
+            "vulnerability_library_title",
+        ):
+            value = finding.get(key)
+            if value:
+                title_candidates.append(str(value))
+        nested = finding.get("vulnerability_library_issue")
+        if isinstance(nested, dict) and nested.get("title"):
+            title_candidates.append(str(nested.get("title")))
+        if not title_candidates:
+            fallback_title = finding.get("vulnerability_title") or finding.get("title")
+            if fallback_title:
+                title_candidates.append(str(fallback_title))
+        if writeup_title not in title_candidates:
+            return False
+        if library:
+            library_value = (
+                finding.get("belongs_to_library")
+                or finding.get("library")
+                or finding.get("library_name")
+                or finding.get("vulnerability_library_name")
+            )
+            if library_value and str(library_value) != str(library):
+                return False
+        return True
+
+    def _finding_dedupe_keys(
+        self,
+        project_id: str,
+        finding_title: str,
+        writeup_ids: Set[str],
+        writeup_title: Optional[str],
+        library: Optional[str],
+    ) -> List[str]:
+        keys: List[str] = []
+        for wid in writeup_ids:
+            keys.append(f"{project_id}|writeup_id:{wid}|title:{finding_title}")
+        if writeup_title:
+            keys.append(
+                f"{project_id}|writeup_title:{writeup_title}|library:{library or ''}|title:{finding_title}"
+            )
+        return keys
+
+    def _lookup_finding_dedupe_cache(self, keys: List[str]) -> Optional[str]:
+        for key in keys:
+            cached = self._finding_dedupe_cache.get(key)
+            if cached:
+                return cached
+        return None
+
+    def _cache_finding_dedupe(self, keys: List[str], finding_id: Optional[str]) -> None:
+        if not finding_id:
+            return
+        for key in keys:
+            self._finding_dedupe_cache[key] = str(finding_id)
+
+    def _apply_cached_testcase_links(
+        self,
+        project_id: str,
+        testcase_id: str,
+        testcase: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(testcase, dict):
+            return testcase
+        cache_key = (str(project_id), str(testcase_id))
+        cached_links = self._testcase_link_cache.get(cache_key)
+        if not cached_links:
+            return testcase
+        existing = testcase.get("linked_vulnerabilities") or []
+        merged: List[str] = []
+        seen: Set[str] = set()
+        if isinstance(existing, dict):
+            existing = [existing]
+        for item in existing or []:
+            if isinstance(item, dict):
+                value = item.get("id") or item.get("vulnerability_id") or item.get("_id")
+                if value:
+                    value = str(value)
+            else:
+                value = str(item)
+            if value and value not in seen:
+                merged.append(value)
+                seen.add(value)
+        for fid in cached_links:
+            if fid not in seen:
+                merged.append(fid)
+                seen.add(fid)
+        testcase["linked_vulnerabilities"] = merged
+        return testcase
+
+    def _find_testcase_in_list(self, project_id: str, testcase_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            testcases = self.get_testcases(project_id)
+        except Exception:
+            return None
+        for item in testcases:
+            if not isinstance(item, dict):
+                continue
+            item_id = item.get("id")
+            if item_id and str(item_id) == str(testcase_id):
+                return item
+        return None
 
     def upsert_finding_for_project(
         self,
@@ -204,7 +773,7 @@ class PyAttackForgeClient:
             update_payload = {
                 "affected_assets": [{"assetName": n} for n in updated_assets],
                 "notes": existing_notes,
-                "project_id": project_id,
+                "projectId": project_id,
             }
             resp = self._request("put", f"/api/ss/vulnerability/{match['vulnerability_id']}", json_data=update_payload)
             if resp.status_code not in (200, 201):
@@ -339,7 +908,86 @@ class PyAttackForgeClient:
         resp = self._request("get", f"/api/ss/vulnerability/{vulnerability_id}")
         self._ensure_response(resp, (200,), "fetch vulnerability")
         data = resp.json()
-        return self._unwrap(data, "vulnerability")
+        vulnerability = self._normalize_vulnerability_payload(data)
+        if isinstance(vulnerability, dict):
+            evidence_items = vulnerability.get("vulnerability_evidence") or []
+            if isinstance(evidence_items, dict):
+                evidence_items = [evidence_items]
+            for item in evidence_items or []:
+                if not isinstance(item, dict):
+                    continue
+                name = (
+                    item.get("file_name_custom")
+                    or item.get("file_name")
+                    or item.get("name")
+                    or item.get("filename")
+                    or item.get("original_name")
+                    or item.get("original_filename")
+                )
+                if not name:
+                    continue
+                size = (
+                    item.get("file_size")
+                    or item.get("size")
+                    or item.get("file_size_bytes")
+                    or item.get("fileSize")
+                    or item.get("fileSizeBytes")
+                )
+                try:
+                    if size is not None:
+                        self._cache_vulnerability_evidence(
+                            vulnerability_id,
+                            os.path.basename(str(name)),
+                            int(size),
+                        )
+                except (TypeError, ValueError):
+                    continue
+        return vulnerability
+
+    def extract_assets_from_finding(self, finding: Dict[str, Any]) -> Set[str]:
+        """
+        Extract affected asset names from a finding/vulnerability payload.
+
+        Args:
+            finding (dict): Finding/vulnerability payload.
+
+        Returns:
+            set: Asset names.
+        """
+        names: Set[str] = set()
+        if not isinstance(finding, dict):
+            return names
+        raw_assets = (
+            finding.get("vulnerability_affected_assets")
+            or finding.get("affected_assets")
+            or finding.get("affectedAssets")
+            or finding.get("assets")
+            or finding.get("affected_asset")
+            or finding.get("affectedAsset")
+            or []
+        )
+        if isinstance(raw_assets, dict):
+            raw_assets = [raw_assets]
+        for asset in raw_assets:
+            if isinstance(asset, dict):
+                name = asset.get("assetName") or asset.get("asset_name") or asset.get("name") or asset.get("asset")
+                if not name and isinstance(asset.get("asset"), dict):
+                    nested = asset.get("asset") or {}
+                    name = nested.get("name") or nested.get("asset") or nested.get("asset_name")
+                if name:
+                    names.add(str(name))
+            elif isinstance(asset, str):
+                names.add(asset)
+        for key in (
+            "vulnerability_affected_asset_name",
+            "affected_asset_name",
+            "affectedAssetName",
+            "asset_name",
+        ):
+            value = finding.get(key)
+            if value:
+                names.add(str(value))
+        return names
 
     def update_finding(
         self,
@@ -364,18 +1012,18 @@ class PyAttackForgeClient:
         """
         if not vulnerability_id:
             raise ValueError("Missing required field: vulnerability_id")
-        payload: Dict[str, Any] = {}
-        if project_id:
-            payload["project_id"] = project_id
-        if affected_assets is not None:
-            asset_payloads, _, _ = self._build_asset_payloads(affected_assets)
-            payload["affected_assets"] = asset_payloads
-        if notes is not None:
-            payload["notes"] = notes
-        for key, value in (kwargs or {}).items():
-            if value is not None:
-                payload[key] = value
-        resp = self._request("put", f"/api/ss/vulnerability/{vulnerability_id}", json_data=payload)
+        payload, params = self._build_update_finding_payload(
+            project_id,
+            affected_assets,
+            notes,
+            kwargs,
+        )
+        resp = self._request(
+            "put",
+            f"/api/ss/vulnerability/{vulnerability_id}",
+            json_data=payload,
+            params=params,
+        )
         self._ensure_response(resp, (200, 201), "update finding")
         data = resp.json()
         return self._unwrap(data, "vulnerability")
@@ -462,15 +1110,18 @@ class PyAttackForgeClient:
         payload: Dict[str, Any] = {
             "linked_testcases": testcase_ids,
         }
-        if project_id:
-            payload["project_id"] = project_id
+        params = {"projectId": project_id} if project_id else None
         resp = self._request(
             "put",
             f"/api/ss/vulnerability/{vulnerability_id}",
             json_data=payload,
+            params=params,
         )
         self._ensure_response(resp, (200, 201), "link vulnerability to testcases")
         data = resp.json()
+        if project_id:
+            for tc_id in testcase_ids:
+                self._cache_testcase_link(project_id, tc_id, vulnerability_id)
         return self._unwrap(data, "vulnerability")
 
     def get_testcases(
@@ -498,10 +1149,15 @@ class PyAttackForgeClient:
         self._ensure_response(resp, (200, 201), "fetch testcases")
         data = resp.json()
         if isinstance(data, dict) and "testcases" in data:
-            return data.get("testcases", [])
-        if isinstance(data, list):
-            return data
-        return []
+            testcases = data.get("testcases", [])
+        elif isinstance(data, list):
+            testcases = data
+        else:
+            return []
+        normalized: List[Dict[str, Any]] = []
+        for item in testcases:
+            normalized.append(self._normalize_testcase_payload(item))
+        return normalized
 
     def get_testcase(self, project_id: str, testcase_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -520,18 +1176,375 @@ class PyAttackForgeClient:
             raise ValueError("Missing required field: testcase_id")
         resp = self._request("get", f"/api/ss/project/{project_id}/testcase/{testcase_id}")
         if resp.status_code == 404:
-            return None
+            testcase = self._find_testcase_in_list(project_id, testcase_id)
+            return self._apply_cached_testcase_links(project_id, testcase_id, testcase)
         self._ensure_response(resp, (200, 201), "fetch testcase")
         data = resp.json()
-        return self._unwrap(data, "testcase") if isinstance(data, dict) else None
+        testcase = self._normalize_testcase_payload(data if isinstance(data, dict) else None)
+        if not isinstance(testcase, dict):
+            testcase = self._find_testcase_in_list(project_id, testcase_id)
+        return self._apply_cached_testcase_links(project_id, testcase_id, testcase)
+
+    def get_project_testcase_by_id(
+        self,
+        project_id: str,
+        testcase_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Alias for get_testcase to support project testcase lookup.
+        """
+        return self.get_testcase(project_id, testcase_id)
+
+    def extract_findings_from_testcase(self, testcase: Dict[str, Any]) -> List[str]:
+        """
+        Extract linked finding IDs from a testcase payload.
+        """
+        if not isinstance(testcase, dict):
+            return []
+        linked = (
+            testcase.get("linked_vulnerabilities")
+            or testcase.get("linked_findings")
+            or testcase.get("linked_vulnerability_ids")
+            or testcase.get("linked_vulnerability_id")
+            or []
+        )
+        if isinstance(linked, dict):
+            linked = [linked]
+        findings: List[str] = []
+        seen: Set[str] = set()
+        for item in linked:
+            value = None
+            if isinstance(item, dict):
+                for key in ("id", "vulnerability_id", "_id"):
+                    if item.get(key):
+                        value = str(item.get(key))
+                        break
+            elif isinstance(item, str):
+                value = item
+            if value and value not in seen:
+                findings.append(value)
+                seen.add(value)
+        return findings
+
+    def list_testcase_notes(self, project_id: str, testcase_id: str) -> List[Dict[str, Any]]:
+        """
+        List notes associated with a testcase.
+        """
+        testcase = self.get_project_testcase_by_id(project_id, testcase_id)
+        if not testcase:
+            testcases = self.get_testcases(project_id)
+            testcase = next((t for t in testcases if t.get("id") == testcase_id), None)
+        raw_notes = []
+        if isinstance(testcase, dict):
+            for key in (
+                "testcase_notes",
+                "notes",
+                "testcaseNotes",
+                "project_testcase_notes",
+                "testcase_note",
+            ):
+                if key in testcase and testcase.get(key) is not None:
+                    raw_notes = testcase.get(key) or []
+                    break
+        if isinstance(raw_notes, dict):
+            raw_notes = [raw_notes]
+        notes: List[Dict[str, Any]] = []
+        for note in raw_notes or []:
+            if isinstance(note, dict):
+                content = (
+                    note.get("content")
+                    or note.get("note")
+                    or note.get("details")
+                    or note.get("text")
+                )
+                entry = dict(note)
+                if content is not None:
+                    entry.setdefault("content", content)
+                notes.append(entry)
+            else:
+                notes.append({"content": str(note)})
+        return notes
+
+    def list_testcase_files(self, project_id: str, testcase_id: str) -> List[Dict[str, Any]]:
+        """
+        List files/evidence associated with a testcase.
+        """
+        testcase = self.get_project_testcase_by_id(project_id, testcase_id)
+        if not testcase:
+            testcases = self.get_testcases(project_id)
+            testcase = next((t for t in testcases if t.get("id") == testcase_id), None)
+        raw_files = []
+        if isinstance(testcase, dict):
+            for key in (
+                "files",
+                "testcase_files",
+                "testcaseFiles",
+                "project_testcase_files",
+                "projectTestcaseFiles",
+                "uploaded_files",
+                "attachments",
+                "evidence",
+                "testcase_evidence",
+            ):
+                if key in testcase and testcase.get(key) is not None:
+                    raw_files = testcase.get(key) or []
+                    break
+        if isinstance(raw_files, dict):
+            raw_files = [raw_files]
+        files: List[Dict[str, Any]] = []
+        for item in raw_files or []:
+            if isinstance(item, dict):
+                files.append(item)
+            else:
+                files.append({"name": str(item)})
+        cache_key = (str(project_id), str(testcase_id))
+        cache = self._testcase_evidence_cache.setdefault(cache_key, set())
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            name = (
+                item.get("file_name_custom")
+                or item.get("file_name")
+                or item.get("name")
+                or item.get("filename")
+                or item.get("original_name")
+                or item.get("original_filename")
+            )
+            size = (
+                item.get("file_size")
+                or item.get("size")
+                or item.get("file_size_bytes")
+                or item.get("fileSize")
+                or item.get("fileSizeBytes")
+            )
+            if not name or size is None:
+                continue
+            try:
+                cache.add((os.path.basename(str(name)), int(size)))
+            except (TypeError, ValueError):
+                continue
+        if cache:
+            existing_keys = set()
+            for item in files:
+                if not isinstance(item, dict):
+                    continue
+                name = (
+                    item.get("file_name_custom")
+                    or item.get("file_name")
+                    or item.get("name")
+                    or item.get("filename")
+                    or item.get("original_name")
+                    or item.get("original_filename")
+                )
+                size = (
+                    item.get("file_size")
+                    or item.get("size")
+                    or item.get("file_size_bytes")
+                    or item.get("fileSize")
+                    or item.get("fileSizeBytes")
+                )
+                if not name or size is None:
+                    continue
+                try:
+                    existing_keys.add((os.path.basename(str(name)), int(size)))
+                except (TypeError, ValueError):
+                    continue
+            for basename, size in cache:
+                if (basename, size) in existing_keys:
+                    continue
+                files.append({"file_name_custom": basename, "file_size": size, "source": "cache"})
+        return files
+
+    def link_finding_to_testcase(
+        self,
+        project_id: str,
+        testcase_id: str,
+        finding_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Link a finding to a testcase.
+        """
+        if not finding_id:
+            raise ValueError("Missing required field: finding_id")
+        response: Optional[Dict[str, Any]] = None
+        try:
+            response = self.link_vulnerability_to_testcases(
+                vulnerability_id=finding_id,
+                testcase_ids=[testcase_id],
+                project_id=project_id,
+            )
+        except PermissionError:
+            raise
+        except Exception as exc:
+            logger.warning("Unable to link finding via vulnerability update: %s", exc)
+        try:
+            tc_response = self.add_findings_to_testcase(
+                project_id=project_id,
+                testcase_id=testcase_id,
+                vulnerability_ids=[finding_id],
+            )
+            if response is None:
+                response = tc_response
+        except PermissionError:
+            raise
+        except Exception as exc:
+            if response is None:
+                raise
+            logger.warning("Unable to link finding via testcase update: %s", exc)
+        self._cache_testcase_link(project_id, testcase_id, finding_id)
+        return response or {"linked": True}
+
+    def attach_finding_to_testcase_with_notes_and_evidence(
+        self,
+        project_id: str,
+        testcase_id: str,
+        finding_id: str,
+        note_text: Optional[str] = None,
+        evidence_path: Optional[str] = None,
+        dedupe: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Link a finding to a testcase, add a note, and upload evidence with idempotent checks.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not testcase_id:
+            raise ValueError("Missing required field: testcase_id")
+        if not finding_id:
+            raise ValueError("Missing required field: finding_id")
+        result: Dict[str, Any] = {}
+        result["link_response"] = self.link_finding_to_testcase(
+            project_id=project_id,
+            testcase_id=testcase_id,
+            finding_id=finding_id,
+        )
+
+        if note_text is not None:
+            note_created = False
+            note_reason = None
+            if dedupe:
+                try:
+                    notes = self.list_testcase_notes(project_id, testcase_id)
+                    if any(
+                        note_text == (n.get("content") or n.get("note") or "")
+                        for n in notes
+                        if isinstance(n, dict)
+                    ):
+                        note_reason = "duplicate"
+                    else:
+                        note_created = True
+                except Exception:
+                    note_created = True
+            else:
+                note_created = True
+
+            if note_created:
+                result["note_response"] = self.add_note_to_testcase(
+                    project_id=project_id,
+                    testcase_id=testcase_id,
+                    note=note_text,
+                )
+                result["note_created"] = True
+            else:
+                if note_reason == "duplicate":
+                    print(f"SKIP note (already exists): {note_text}")
+                result["note_created"] = False
+                result["note_reason"] = note_reason or "duplicate"
+        else:
+            result["note_created"] = False
+
+        if evidence_path:
+            evidence_uploaded = False
+            evidence_reason = None
+            if dedupe:
+                try:
+                    basename = os.path.basename(evidence_path)
+                    file_size = os.path.getsize(evidence_path)
+                    cache_key = (str(project_id), str(testcase_id))
+                    cache = self._testcase_evidence_cache.get(cache_key, set())
+                    files: List[Dict[str, Any]] = []
+                    if (basename, int(file_size)) in cache:
+                        print(
+                            f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                        )
+                        evidence_reason = "duplicate"
+                    else:
+                        files = self.list_testcase_files(project_id, testcase_id)
+                    for item in files if evidence_reason != "duplicate" else []:
+                        if not isinstance(item, dict):
+                            continue
+                        name = (
+                            item.get("file_name_custom")
+                            or item.get("file_name")
+                            or item.get("name")
+                            or item.get("filename")
+                            or item.get("original_name")
+                            or item.get("original_filename")
+                        )
+                        if not name:
+                            continue
+                        if os.path.basename(str(name)) != basename:
+                            continue
+                        existing_size = (
+                            item.get("file_size")
+                            or item.get("size")
+                            or item.get("file_size_bytes")
+                            or item.get("fileSize")
+                            or item.get("fileSizeBytes")
+                        )
+                        if existing_size is None:
+                            continue
+                        try:
+                            if int(existing_size) == int(file_size):
+                                print(
+                                    f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                                )
+                                evidence_reason = "duplicate"
+                                self._cache_testcase_evidence(
+                                    project_id, testcase_id, basename, int(file_size)
+                                )
+                                break
+                        except (TypeError, ValueError):
+                            continue
+                    if evidence_reason != "duplicate":
+                        evidence_uploaded = True
+                except Exception:
+                    evidence_uploaded = True
+            else:
+                evidence_uploaded = True
+
+            if evidence_uploaded:
+                result["evidence_response"] = self.upload_testcase_evidence(
+                    project_id=project_id,
+                    testcase_id=testcase_id,
+                    file_path=evidence_path,
+                )
+                try:
+                    self._cache_testcase_evidence(
+                        project_id,
+                        testcase_id,
+                        os.path.basename(evidence_path),
+                        int(os.path.getsize(evidence_path)),
+                    )
+                except (OSError, ValueError, TypeError):
+                    pass
+                result["evidence_uploaded"] = True
+            else:
+                result["evidence_uploaded"] = False
+                result["evidence_reason"] = evidence_reason or "duplicate"
+        else:
+            result["evidence_uploaded"] = False
+
+        return result
 
     def create_testcase(
         self,
         project_id: str,
-        testcase: str,
+        testcase: Optional[str] = None,
         details: Optional[str] = None,
         status: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        title: Optional[str] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -540,8 +1553,9 @@ class PyAttackForgeClient:
         Args:
             project_id (str): Project ID.
             testcase (str): Testcase title/name.
+            title (str, optional): Alias for testcase title/name.
             details (str, optional): Testcase details/description.
-            status (str, optional): Initial status (e.g., "Not Started").
+            status (str, optional): Initial status (e.g., "Not Tested").
             tags (list, optional): Tags to associate with the testcase.
             **kwargs: Additional fields accepted by the API.
 
@@ -550,16 +1564,22 @@ class PyAttackForgeClient:
         """
         if not project_id:
             raise ValueError("Missing required field: project_id")
-        if not testcase:
+        resolved_testcase = testcase or title
+        if not resolved_testcase:
             raise ValueError("Missing required field: testcase")
-        payload: Dict[str, Any] = {"testcase": testcase}
+        payload: Dict[str, Any] = {"testcase": resolved_testcase}
         if details is not None:
             payload["details"] = details
-        if status is not None:
-            payload["status"] = status
         if tags is not None:
             payload["tags"] = tags
         payload.update(kwargs)
+        if status is not None:
+            payload["status"] = status
+        if "status" in payload:
+            if payload["status"] is None:
+                payload.pop("status")
+            else:
+                payload["status"] = self._normalize_testcase_status(payload["status"])
         resp = self._request(
             "post",
             f"/api/ss/project/{project_id}/testcase",
@@ -567,7 +1587,8 @@ class PyAttackForgeClient:
         )
         self._ensure_response(resp, (200, 201), "create testcase")
         data = resp.json()
-        return self._unwrap(data, "testcase")
+        testcase_payload = self._unwrap(data, "testcase")
+        return self._normalize_testcase_payload(testcase_payload)
 
     def delete_testcase(self, project_id: str, testcase_id: str) -> Dict[str, Any]:
         """
@@ -588,6 +1609,8 @@ class PyAttackForgeClient:
             "delete",
             f"/api/ss/project/{project_id}/testcase/{testcase_id}"
         )
+        if resp.status_code == 404:
+            return {"deleted": False, "reason": "not_found"}
         self._ensure_response(resp, (200, 204), "delete testcase")
         if resp.status_code == 204:
             return {"deleted": True}
@@ -622,20 +1645,56 @@ class PyAttackForgeClient:
         if not os.path.isfile(file_path):
             raise FileNotFoundError(f"Evidence file not found: {file_path}")
         endpoint = f"/api/ss/vulnerability/{vulnerability_id}/evidence"
+        basename = os.path.basename(file_path)
+        file_size = os.path.getsize(file_path)
         if dedupe:
+            cached = self._vulnerability_evidence_cache.get(str(vulnerability_id), set())
+            if (basename, int(file_size)) in cached:
+                print(
+                    f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                )
+                return {
+                    "uploaded": False,
+                    "reason": "duplicate",
+                    "existing_evidence": {
+                        "file_name_custom": basename,
+                        "file_size": file_size,
+                        "source": "cache",
+                    },
+                }
             try:
                 vuln = self.get_vulnerability(vulnerability_id)
                 evidence_items = []
                 if isinstance(vuln, dict):
                     evidence_items = vuln.get("vulnerability_evidence") or []
-                basename = os.path.basename(file_path)
-                file_size = os.path.getsize(file_path)
-                file_hash = self._sha256_file(file_path)
+                if isinstance(evidence_items, dict):
+                    evidence_items = [evidence_items]
+                if not isinstance(evidence_items, list):
+                    evidence_items = []
+                file_hash = None
                 for item in evidence_items:
-                    if self._evidence_matches(item, basename, file_size, file_hash):
+                    existing_hash = self._evidence_hash_value(item)
+                    if existing_hash and file_hash is None:
+                        file_hash = self._sha256_file(file_path)
+                    if self._evidence_matches(
+                        item,
+                        basename,
+                        file_size,
+                        file_hash=file_hash,
+                        evidence_hash=existing_hash,
+                    ):
+                        print(
+                            f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                        )
+                        try:
+                            self._cache_vulnerability_evidence(
+                                vulnerability_id, basename, int(file_size)
+                            )
+                        except (TypeError, ValueError):
+                            pass
                         return {
-                            "skipped": True,
-                            "reason": "duplicate_evidence",
+                            "uploaded": False,
+                            "reason": "duplicate",
                             "existing_evidence": item,
                         }
             except PermissionError:
@@ -644,7 +1703,7 @@ class PyAttackForgeClient:
                 logger.warning("Evidence dedupe check failed; proceeding with upload: %s", exc)
         if self.dry_run:
             resp = self._request("post", endpoint)
-            return resp.json()
+            return {"uploaded": True, "dry_run": True, "response": resp.json()}
         with open(file_path, "rb") as evidence:
             resp = self._request(
                 "post",
@@ -652,7 +1711,13 @@ class PyAttackForgeClient:
                 files={"file": (os.path.basename(file_path), evidence)}
             )
         self._ensure_response(resp, (200, 201), "upload finding evidence")
-        return resp.json()
+        try:
+            self._cache_vulnerability_evidence(
+                vulnerability_id, basename, int(file_size)
+            )
+        except (TypeError, ValueError):
+            pass
+        return {"uploaded": True, "response": resp.json()}
 
     def delete_finding_evidence(self, vulnerability_id: str, storage_name: str) -> Dict[str, Any]:
         """
@@ -716,6 +1781,15 @@ class PyAttackForgeClient:
                 files={"file": (os.path.basename(file_path), evidence)}
             )
         self._ensure_response(resp, (200, 201), "upload testcase evidence")
+        try:
+            self._cache_testcase_evidence(
+                project_id,
+                testcase_id,
+                os.path.basename(file_path),
+                int(os.path.getsize(file_path)),
+            )
+        except (OSError, ValueError, TypeError):
+            pass
         return resp.json()
 
     def add_note_to_testcase(
@@ -791,7 +1865,10 @@ class PyAttackForgeClient:
                 merged_ids.append(vid)
                 seen.add(vid)
         payload["linked_vulnerabilities"] = merged_ids
-        return self.update_testcase(project_id, testcase_id, payload)
+        resp = self.update_testcase(project_id, testcase_id, payload)
+        for vid in merged_ids:
+            self._cache_testcase_link(project_id, testcase_id, vid)
+        return resp
 
     def update_testcase(
         self,
@@ -816,11 +1893,20 @@ class PyAttackForgeClient:
             raise ValueError("Missing required field: testcase_id")
         if not update_fields:
             raise ValueError("update_fields cannot be empty")
+        update_fields = dict(update_fields)
+        if "status" in update_fields:
+            if update_fields["status"] is None:
+                update_fields.pop("status")
+            else:
+                update_fields["status"] = self._normalize_testcase_status(update_fields["status"])
+        if not update_fields:
+            raise ValueError("update_fields cannot be empty")
         endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}"
         resp = self._request("put", endpoint, json_data=update_fields)
         self._ensure_response(resp, (200, 201), "update testcase")
         data = resp.json()
-        return self._unwrap(data, "testcase")
+        testcase = self._unwrap(data, "testcase")
+        return self._normalize_testcase_payload(testcase)
 
     def add_findings_to_testcase(
         self,
@@ -1407,20 +2493,26 @@ class PyAttackForgeClient:
 
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str] = None,
         base_url: str = "https://demo.attackforge.com",
         dry_run: bool = False,
         verify_ssl: Optional[bool] = None,
         default_library: Optional[str] = None,
+        ssapi_key: Optional[str] = None,
     ):
         """
         Initialize the PyAttackForgeClient.
 
         Args:
             api_key (str): Your AttackForge API key.
+            ssapi_key (str, optional): Alias for api_key (used by some integrations/tests).
             base_url (str, optional): The base URL for the AttackForge instance. Defaults to "https://demo.attackforge.com".
             dry_run (bool, optional): If True, no real API calls are made. Defaults to False.
         """
+        if api_key is None:
+            api_key = ssapi_key
+        if api_key is None:
+            raise ValueError("Missing required field: api_key")
         base = (base_url or "").strip()
         if base and not base.startswith(("http://", "https://")):
             base = f"https://{base}"
@@ -1440,6 +2532,10 @@ class PyAttackForgeClient:
         self._asset_cache = None
         self._project_scope_cache = {}
         self._writeup_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        self._vulnerability_evidence_cache: Dict[str, Set[Tuple[str, int]]] = {}
+        self._testcase_evidence_cache: Dict[Tuple[str, str], Set[Tuple[str, int]]] = {}
+        self._testcase_link_cache: Dict[Tuple[str, str], Set[str]] = {}
+        self._finding_dedupe_cache: Dict[str, str] = {}
 
     def get_all_writeups(
         self,
@@ -1505,6 +2601,66 @@ class PyAttackForgeClient:
                 continue
             return w.get("reference_id") or w.get("id") or w.get("_id")
         return None
+
+    def get_or_create_library_issue(
+        self,
+        title: str,
+        belongs_to_library: Optional[str] = None,
+        description: Optional[str] = None,
+        remediation_recommendation: Optional[str] = None,
+        attack_scenario: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Fetch a vulnerability writeup from the library or create it if missing.
+        """
+        if not title:
+            raise ValueError("Missing required field: title")
+        library_name = belongs_to_library or self.default_library
+        writeups = self.get_all_writeups(belongs_to_library=library_name)
+        match = next(
+            (
+                w
+                for w in writeups
+                if w.get("title") == title
+                and (
+                    not library_name
+                    or (w.get("belongs_to_library") or w.get("library")) == library_name
+                )
+            ),
+            None,
+        )
+        if match:
+            return match
+
+        description_value = description or f"Auto-generated writeup for {title}."
+        remediation_value = remediation_recommendation or "Review and remediate per guidance."
+        attack_value = attack_scenario or "Auto-generated by PyAttackForge."
+        self.create_writeup(
+            title=title,
+            description=description_value,
+            remediation_recommendation=remediation_value,
+            attack_scenario=attack_value,
+            belongs_to_library=library_name,
+            **kwargs,
+        )
+        self.get_all_writeups(force_refresh=True, belongs_to_library=library_name)
+        writeups = self.get_all_writeups(belongs_to_library=library_name)
+        match = next(
+            (
+                w
+                for w in writeups
+                if w.get("title") == title
+                and (
+                    not library_name
+                    or (w.get("belongs_to_library") or w.get("library")) == library_name
+                )
+            ),
+            None,
+        )
+        if not match:
+            raise RuntimeError("Writeup creation failed: missing library issue")
+        return match
 
     def _request(
         self,
@@ -1893,6 +3049,178 @@ class PyAttackForgeClient:
         data = resp.json()
         return self._unwrap(data, "vulnerability")
 
+    def upsert_finding_from_writeup(
+        self,
+        project_id: str,
+        writeup: Any,
+        title: Optional[str] = None,
+        assets: Optional[List[Any]] = None,
+        dedupe: bool = True,
+        append_assets: bool = True,
+        priority: Optional[str] = None,
+        likelihood_of_exploitation: int = 1,
+        steps_to_reproduce: Optional[str] = None,
+        linked_testcases: Optional[List[str]] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Upsert a finding from a library writeup with idempotent dedupe and asset append.
+        """
+        if not project_id:
+            raise ValueError("Missing required field: project_id")
+        if not writeup:
+            raise ValueError("Missing required field: writeup")
+
+        writeup_id, writeup_title, library_name = self._extract_writeup_identity(writeup)
+        finding_title = title or writeup_title
+        if not finding_title:
+            raise ValueError("Missing required field: title")
+
+        assets = assets or []
+        asset_payloads, asset_names, asset_ids = self._build_asset_payloads(assets)
+        writeup_ids = self._collect_writeup_ids_from_writeup(writeup)
+        if writeup_id:
+            writeup_ids.add(str(writeup_id))
+        dedupe_keys = self._finding_dedupe_keys(
+            project_id,
+            finding_title,
+            writeup_ids,
+            writeup_title,
+            library_name,
+        )
+
+        if asset_names or asset_ids:
+            scope = self.get_project_scope(project_id)
+            missing_in_scope = [n for n in asset_names if n not in scope]
+            if missing_in_scope or asset_ids:
+                self.add_assets_to_project(
+                    project_id,
+                    missing_in_scope or asset_names,
+                    asset_library_ids=asset_ids,
+                )
+
+        if dedupe:
+            cached_id = self._lookup_finding_dedupe_cache(dedupe_keys)
+            if cached_id:
+                updated_assets = False
+                if append_assets and asset_payloads:
+                    try:
+                        updated_assets = self._append_assets_to_finding(
+                            project_id,
+                            cached_id,
+                            asset_payloads,
+                        )
+                    except Exception:
+                        updated_assets = False
+                return {
+                    "finding_id": cached_id,
+                    "deduped": True,
+                    "created": False,
+                    "updated_assets": updated_assets,
+                }
+            findings = self.get_findings_for_project(project_id)
+            match = None
+            detail_checked: Set[str] = set()
+            for finding in findings:
+                finding_id = self._extract_vulnerability_id(finding)
+                title_match = self._finding_title_matches(finding, finding_title)
+                writeup_match = self._finding_matches_writeup(
+                    finding, writeup_ids or writeup_id, writeup_title, library_name
+                )
+                if title_match and writeup_match:
+                    match = finding
+                    break
+                needs_detail = False
+                if finding_id and (title_match or writeup_match):
+                    needs_detail = True
+                elif finding_id and writeup_title and self._finding_title_matches(finding, writeup_title):
+                    needs_detail = True
+                if needs_detail and finding_id:
+                    try:
+                        detail = self.get_vulnerability(finding_id)
+                    except Exception:
+                        continue
+                    detail_checked.add(finding_id)
+                    if self._finding_title_matches(detail, finding_title) and self._finding_matches_writeup(
+                        detail, writeup_ids or writeup_id, writeup_title, library_name
+                    ):
+                        match = detail
+                        break
+            if not match:
+                for finding in findings:
+                    finding_id = self._extract_vulnerability_id(finding)
+                    if not finding_id or finding_id in detail_checked:
+                        continue
+                    try:
+                        detail = self.get_vulnerability(finding_id)
+                    except Exception:
+                        continue
+                    detail_checked.add(finding_id)
+                    if self._finding_title_matches(detail, finding_title) and self._finding_matches_writeup(
+                        detail, writeup_ids or writeup_id, writeup_title, library_name
+                    ):
+                        match = detail
+                        break
+            if match:
+                finding_id = self._extract_vulnerability_id(match)
+                updated_assets = False
+                if append_assets and asset_payloads:
+                    try:
+                        updated_assets = self._append_assets_to_finding(
+                            project_id,
+                            finding_id,
+                            asset_payloads,
+                            existing_finding=match if isinstance(match, dict) else None,
+                        )
+                    except Exception:
+                        updated_assets = False
+                self._cache_finding_dedupe(dedupe_keys, finding_id)
+                return {
+                    "finding_id": finding_id,
+                    "deduped": True,
+                    "created": False,
+                    "updated_assets": updated_assets,
+                }
+
+        if not writeup_id and writeup_title:
+            library_lookup = library_name or self.default_library
+            self.get_all_writeups(belongs_to_library=library_lookup)
+            writeup_id = self.find_writeup_in_cache(writeup_title, library_lookup)
+        if not writeup_id:
+            raise RuntimeError("Missing writeup identifier for finding creation")
+
+        priority_value = priority or "Low"
+        steps_value = steps_to_reproduce or "See writeup"
+        payload_kwargs = dict(kwargs)
+        payload_kwargs.setdefault("likelihood_of_exploitation", likelihood_of_exploitation)
+        payload_kwargs.setdefault("steps_to_reproduce", steps_value)
+
+        result = self.create_finding_from_writeup(
+            project_id=project_id,
+            writeup_id=writeup_id,
+            priority=priority_value,
+            affected_assets=asset_payloads or None,
+            linked_testcases=linked_testcases,
+            **payload_kwargs,
+        )
+        finding_id = self._extract_vulnerability_id(result)
+        if finding_id and title:
+            try:
+                self.update_finding(
+                    vulnerability_id=finding_id,
+                    project_id=project_id,
+                    title=title,
+                )
+            except Exception:
+                pass
+        self._cache_finding_dedupe(dedupe_keys, finding_id)
+        return {
+            "finding_id": finding_id,
+            "deduped": False,
+            "created": True,
+            "response": result,
+        }
+
     def create_vulnerability(
         self,
         project_id: str,
@@ -2008,30 +3336,70 @@ class PyAttackForgeClient:
                 digest.update(chunk)
         return digest.hexdigest()
 
+    def _evidence_hash_value(self, evidence: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(evidence, dict):
+            return None
+        for key in (
+            "sha256",
+            "sha_256",
+            "file_sha256",
+            "file_hash",
+            "hash",
+            "checksum",
+        ):
+            value = evidence.get(key)
+            if value:
+                return str(value)
+        for nested_key in ("file", "evidence"):
+            nested = evidence.get(nested_key)
+            if not isinstance(nested, dict):
+                continue
+            for key in (
+                "sha256",
+                "sha_256",
+                "file_sha256",
+                "file_hash",
+                "hash",
+                "checksum",
+            ):
+                value = nested.get(key)
+                if value:
+                    return str(value)
+        return None
+
     def _evidence_matches(
         self,
         evidence: Dict[str, Any],
         basename: str,
         file_size: int,
-        sha256: str
+        file_hash: Optional[str] = None,
+        evidence_hash: Optional[str] = None,
     ) -> bool:
         if not isinstance(evidence, dict):
             return False
+        candidate_dicts = [evidence]
+        for nested_key in ("file", "evidence"):
+            nested = evidence.get(nested_key)
+            if isinstance(nested, dict):
+                candidate_dicts.append(nested)
         name_candidates = []
-        for key in (
-            "file_name_custom",
-            "file_name",
-            "name",
-            "filename",
-            "original_name",
-            "original_filename",
-            "file_name_original",
-            "fileName",
-            "originalName",
-        ):
-            value = evidence.get(key)
-            if value:
-                name_candidates.append(str(value))
+        for candidate in candidate_dicts:
+            for key in (
+                "file_name_custom",
+                "file_name",
+                "fileNameCustom",
+                "name",
+                "filename",
+                "original_name",
+                "original_filename",
+                "file_name_original",
+                "fileName",
+                "originalName",
+                "originalFileName",
+            ):
+                value = candidate.get(key)
+                if value:
+                    name_candidates.append(str(value))
         if not name_candidates:
             return False
         name_match = False
@@ -2041,22 +3409,37 @@ class PyAttackForgeClient:
                 break
         if not name_match:
             return False
-        existing_size = (
-            evidence.get("file_size")
-            or evidence.get("size")
-            or evidence.get("file_size_bytes")
-        )
+        existing_size = None
+        for candidate in candidate_dicts:
+            existing_size = (
+                candidate.get("file_size")
+                or candidate.get("size")
+                or candidate.get("file_size_bytes")
+                or candidate.get("fileSize")
+                or candidate.get("fileSizeBytes")
+                or candidate.get("size_bytes")
+                or candidate.get("bytes")
+                or candidate.get("length")
+                or candidate.get("content_length")
+            )
+            if existing_size is not None:
+                break
         size_match = False
         if existing_size is not None:
             try:
                 size_match = int(existing_size) == int(file_size)
             except (TypeError, ValueError):
                 size_match = False
-        existing_hash = evidence.get("sha256") or evidence.get("file_hash")
-        sha_match = False
-        if existing_hash:
-            sha_match = str(existing_hash).lower() == sha256.lower()
-        return size_match or sha_match
+        if size_match:
+            return True
+        if existing_size is not None:
+            return False
+        if file_hash:
+            if evidence_hash is None:
+                evidence_hash = self._evidence_hash_value(evidence)
+            if evidence_hash and evidence_hash.lower() == file_hash.lower():
+                return True
+        return False
 
     def create_vulnerability_old(
         self,

@@ -140,7 +140,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertEqual(vuln.get("writeup_id"), "writeup-123")
         self.assertEqual(captured.get("writeup_id"), "writeup-123")
         assets = captured.get("affected_assets", [])
-        self.assertEqual(assets, [{"assetName": "AssetExisting"}])
+        self.assertEqual(assets, [{"name": "AssetExisting", "assetName": "AssetExisting"}])
 
     def test_create_vulnerability_old_dry_run(self):
         vuln = self.client.create_vulnerability_old(
@@ -739,6 +739,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
         def fake_request(method, endpoint, json_data=None, params=None, files=None, data=None, headers_override=None):
             captured["endpoint"] = endpoint
             captured["json_data"] = json_data
+            captured["params"] = params
             return Resp()
 
         self.client._request = fake_request
@@ -751,16 +752,33 @@ class TestPyAttackForgeClient(unittest.TestCase):
         )
         self.assertIsInstance(resp, dict)
         payload = captured["json_data"]
-        self.assertEqual(payload["project_id"], "p-1")
+        self.assertNotIn("projectId", payload)
+        self.assertEqual(captured["params"], {"projectId": "p-1"})
         self.assertEqual(
             payload["affected_assets"],
-            [{"assetName": "asset-a"}, {"assetName": "asset-b"}, {"assetName": "asset-c"}],
+            [
+                {"name": "asset-a", "assetName": "asset-a"},
+                {"name": "asset-b", "assetName": "asset-b"},
+                {"name": "asset-c", "assetName": "asset-c"},
+            ],
         )
         self.assertEqual(payload["notes"], [{"note": "n1", "type": "PLAINTEXT"}])
         self.assertEqual(payload["custom"], "field")
         self.assertEqual(captured["endpoint"], "/api/ss/vulnerability/v-1")
         with self.assertRaises(ValueError):
             self.client.update_finding("", project_id="p-1")
+
+    def test_build_update_finding_payload(self):
+        payload, params = self.client._build_update_finding_payload(
+            project_id="proj-123",
+            affected_assets=[{"name": "asset-a"}],
+            notes=[{"note": "n1", "type": "PLAINTEXT"}],
+            extra_fields={"title": "New Title"},
+        )
+        self.assertEqual(params, {"projectId": "proj-123"})
+        self.assertEqual(payload["affected_assets"], [{"name": "asset-a", "assetName": "asset-a"}])
+        self.assertEqual(payload["notes"], [{"note": "n1", "type": "PLAINTEXT"}])
+        self.assertEqual(payload["title"], "New Title")
 
     def test_get_testcases(self):
         cases = self.client.get_testcases("proj1")
@@ -791,6 +809,15 @@ class TestPyAttackForgeClient(unittest.TestCase):
         tc = self.client.get_testcase("proj", "tc-ok")
         self.assertIsInstance(tc, dict)
         self.assertEqual(tc.get("id"), "tc-ok")
+
+    def test_normalize_testcase_status(self):
+        self.assertEqual(self.client._normalize_testcase_status("Not Tested"), "Not Tested")
+        self.assertEqual(self.client._normalize_testcase_status("not_started"), "Not Tested")
+        self.assertEqual(self.client._normalize_testcase_status("In Progress"), "Testing In Progress")
+        self.assertEqual(self.client._normalize_testcase_status("testing-in-progress"), "Testing In Progress")
+        self.assertEqual(self.client._normalize_testcase_status("n/a"), "Not Applicable")
+        with self.assertRaises(ValueError):
+            self.client._normalize_testcase_status("Pending")
 
     def test_add_note_to_testcase(self):
         captured = {"endpoints": []}
@@ -827,6 +854,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
             captured["method"] = method
             captured["endpoint"] = endpoint
             captured["json_data"] = json_data
+            captured["params"] = params
             return Resp()
 
         self.client._request = fake_request
@@ -834,7 +862,7 @@ class TestPyAttackForgeClient(unittest.TestCase):
         self.assertIsInstance(resp, dict)
         self.assertEqual(captured["endpoint"], "/api/ss/vulnerability/v1")
         self.assertEqual(captured["json_data"]["linked_testcases"], ["tc1", "tc2"])
-        self.assertEqual(captured["json_data"]["project_id"], "proj1")
+        self.assertEqual(captured["params"], {"projectId": "proj1"})
 
     def test_add_findings_to_testcase(self):
         captured = {}

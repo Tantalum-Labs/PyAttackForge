@@ -208,7 +208,7 @@ client.create_testcase(
     project_id="abc123",
     testcase="Credentialed authentication check",
     details="Validate MFA is enforced for admin accounts.",
-    status="Not Started",
+    status="Not Tested",
     tags=["auth", "mfa"]
 )
 ```

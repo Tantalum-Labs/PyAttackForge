@@ -42,6 +42,20 @@ Optional:
 - `PYATTACKFORGE_BELONGS_TO_LIBRARY` (default: "Main Vulnerabilities")
 - `PYATTACKFORGE_CLEANUP` (default: 1; remove testcases and test evidence when possible)
 
+## Endpoint-specific request validation (required)
+
+For SSAPI calls that return VALIDATION_FAILED, implement endpoint-local validation:
+
+- Add a helper per endpoint (or a shared helper with endpoint name), e.g.:
+  - normalize_testcase_status(status: str) -> str
+- The helper must:
+  - accept a small set of friendly aliases
+  - convert to the canonical strings required by the endpoint
+  - raise ValueError for unsupported values, with the allowed set in the message
+
+Rule of scope:
+- These constraints apply only to that endpoint unless documented otherwise.
+
 ## Required Code Changes
 
 ### A) Fix response handling (unwrap helpers)
@@ -164,3 +178,84 @@ With live tests enabled (`PYATTACKFORGE_LIVE=1`) and valid sandbox credentials:
 - Evidence de-dupe test proves no duplicate evidence is uploaded
 - No secrets exist in the repo (keys/configs removed or sanitized)
 - Client methods return correct unwrapped objects consistent with official SSAPI response shapes
+
+## Idempotency and linkage requirements (must implement + test)
+
+All behaviors below must be validated via live SSAPI integration tests (pytest marker: live) against the sandbox project.
+
+### Definitions
+
+#### Finding de-duplication key (required)
+Two findings are considered the “same finding” (duplicates) if they share ALL of:
+- project_id
+- writeup identifier (preferred: vulnerability library issue id OR writeup title + belongs_to_library)
+- finding title (canonical writeup title)
+
+Assets are NOT part of the de-duplication key.
+
+#### Asset append rule (required)
+If a second “duplicate” finding submission differs only by assets, the client must:
+- re-use the existing finding
+- append any missing assets to the existing finding’s affected assets/scope representation
+- return the existing finding id
+
+#### Evidence de-duplication key (required)
+Evidence is a duplicate if BOTH match:
+- filename (exact match)
+- size in bytes (exact match)
+
+If filename+size already exists on the finding, skip uploading and log:
+- "SKIP evidence (already exists): <filename> (<size> bytes)"
+
+### Required client features
+
+#### A) Upsert finding (required)
+Add a high-level method:
+- upsert_finding_from_writeup(..., assets=[...], dedupe=True, append_assets=True)
+
+Behavior:
+1) Find an existing matching finding in the sandbox project (by de-dup key).
+2) If found:
+   - if append_assets: ensure all requested assets are present on the finding/project scope
+   - return existing finding id and a result indicating "deduped"
+3) If not found:
+   - create the finding and return the new id
+
+The method must not create duplicate findings for the same de-dup key.
+
+#### B) Evidence upload de-dupe (required)
+Update upload_finding_evidence(..., dedupe=True):
+- Before upload, fetch existing evidence list for the finding
+- If filename+size exists already, skip upload and log as specified
+- Return a structured result indicating uploaded/skipped
+
+#### C) Finding ↔ testcase linkage (required)
+Add/validate a method:
+- link_finding_to_testcase(project_id, testcase_id, finding_id)
+
+Must be verifiable via follow-up GET:
+- fetch testcase and confirm the finding is linked (preferred)
+or
+- fetch finding and confirm testcase linkage (acceptable)
+
+#### D) When attaching a finding to a testcase, add testcase notes + evidence (idempotent)
+Add a high-level helper:
+- attach_finding_to_testcase_with_notes_and_evidence(...)
+
+Behavior:
+- Link finding to testcase
+- Add a testcase note that references the finding
+- Upload testcase evidence (optional parameter)
+- Do not duplicate:
+  - note (same text)
+  - evidence (same filename+size)
+- Log skips similarly to evidence skip messaging
+
+### Live test constraints
+- Every live run must use a unique RUN_ID prefix: "PYAF-CI-<timestamp>-<suffix>"
+- All created objects (finding title, testcase title, note content, evidence filenames) must include RUN_ID.
+- Cleanup is preferred:
+  - delete testcases created by tests (if SSAPI supports)
+  - delete evidence created by tests (if permitted)
+  - findings may be left if deletion isn’t supported; they must remain uniquely identifiable by RUN_ID.
+

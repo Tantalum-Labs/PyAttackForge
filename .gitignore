@@ -214,3 +214,4 @@ scripts/
 attackforgePush.py
 
 .vscode/
+.codex/
