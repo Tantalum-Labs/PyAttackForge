@@ -1,11 +1,12 @@
+import json
 import os
 import random
 import socket
 import string
 import time
 from pathlib import Path
-import json
 from urllib.parse import urlparse
+
 import pytest
 
 from tests.helpers_artifacts import report_path
@@ -13,22 +14,6 @@ from tests.helpers_artifacts import report_path
 
 def _rand(n: int = 6) -> str:
     return "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(n))
-
-def _parse_host(base_url: str) -> tuple[str, int]:
-    base = (base_url or "").strip()
-    if not base:
-        return "", 443
-    if "://" not in base:
-        base = f"https://{base}"
-    parsed = urlparse(base)
-    host = parsed.hostname or ""
-    if parsed.port:
-        port = parsed.port
-    elif parsed.scheme == "http":
-        port = 80
-    else:
-        port = 443
-    return host, port
 
 
 @pytest.fixture(scope="session")
@@ -67,26 +52,25 @@ def af_env(live_enabled):
     if missing:
         pytest.skip(f"Missing live env vars: {', '.join(missing)}")
 
-    host, port = _parse_host(base)
-    if host:
-        try:
-            socket.getaddrinfo(host, port)
-        except socket.gaierror:
-            pytest.skip(f"Unable to resolve ATTACKFORGE_BASE_URL host: {host}")
+    parsed = urlparse(base if "://" in base else f"https://{base}")
+    host = parsed.hostname
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if not host:
+        pytest.skip("Invalid ATTACKFORGE_BASE_URL (missing hostname)")
+    try:
+        socket.create_connection((host, port), timeout=3).close()
+    except OSError as exc:
+        pytest.skip(f"Network error contacting SSAPI host {host}:{port}: {exc}")
 
     return {"base_url": base, "ssapi_key": key, "project_id": project_id}
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    # Print artifact report location if it exists for this run.
-    rid = None
-    try:
-        # Access fixture value indirectly via env if user wants; otherwise infer from report search
-        rid = os.getenv("PYATTACKFORGE_LAST_RUN_ID")
-    except Exception:
-        rid = None
+    # Only print the report path during the LIVE run invocation.
+    markexpr = (getattr(getattr(config, "option", None), "markexpr", "") or "").strip()
+    if "live" not in markexpr or "not live" in markexpr:
+        return
 
-    # If env isn't set, try to locate a single report under artifact dir by mtime
     base = Path(os.getenv("PYATTACKFORGE_ARTIFACT_DIR", ".codex/artifacts"))
     report = None
     if base.exists():
@@ -101,8 +85,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             data = json.loads(report.read_text(encoding="utf-8"))
             events = data.get("events", [])
             terminalreporter.write_line(f"  events: {len(events)}")
-            # quick counts
-            uploaded = sum(1 for e in events if e.get("action") in ("upload_evidence", "upload_testcase_evidence") and e.get("uploaded") is True)
+            uploaded = sum(1 for e in events if e.get("action") in ("finding_evidence_upload", "testcase_file_upload") and e.get("uploaded") is True)
             skipped = sum(1 for e in events if e.get("reason") == "duplicate" or e.get("skipped") is True)
             terminalreporter.write_line(f"  uploaded: {uploaded}  skipped(dupe): {skipped}")
         except Exception:

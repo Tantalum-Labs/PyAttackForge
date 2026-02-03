@@ -1,8 +1,13 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
+
+
+def _utc_iso() -> str:
+    # timezone-aware UTC timestamp
+    return datetime.now(timezone.utc).isoformat()
 
 
 def artifacts_dir(run_id: str) -> Path:
@@ -22,7 +27,7 @@ def _load_report(run_id: str) -> Dict[str, Any]:
         return json.loads(p.read_text(encoding="utf-8"))
     return {
         "run_id": run_id,
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": _utc_iso(),
         "events": [],
     }
 
@@ -30,9 +35,10 @@ def _load_report(run_id: str) -> Dict[str, Any]:
 def write_event(run_id: str, test_name: str, event: Dict[str, Any]) -> None:
     data = _load_report(run_id)
     payload = {
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": _utc_iso(),
         "test": test_name,
         **event,
     }
     data["events"].append(payload)
     report_path(run_id).write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
+

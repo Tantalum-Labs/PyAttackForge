@@ -16,6 +16,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import hashlib
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional, Set, Tuple, List
 
@@ -182,6 +183,20 @@ class PyAttackForgeClient:
         cache = self._testcase_evidence_cache.setdefault(key, set())
         cache.add((str(basename), int(file_size)))
 
+    def _cache_testcase_note_file(
+        self,
+        project_id: str,
+        testcase_id: str,
+        note_id: str,
+        basename: str,
+        file_size: int,
+    ) -> None:
+        if not project_id or not testcase_id or not note_id or not basename or file_size is None:
+            return
+        key = (str(project_id), str(testcase_id), str(note_id))
+        cache = self._testcase_note_file_cache.setdefault(key, set())
+        cache.add((str(basename), int(file_size)))
+
     def _cache_testcase_link(self, project_id: str, testcase_id: str, finding_id: str) -> None:
         if not project_id or not testcase_id or not finding_id:
             return
@@ -250,6 +265,28 @@ class PyAttackForgeClient:
                     if extra_key not in testcase and extra_key in outer:
                         testcase[extra_key] = outer.get(extra_key)
                 break
+        if "uploaded_files" not in testcase and "files" not in testcase:
+            for key in (
+                "testcase_files",
+                "testcaseFiles",
+                "project_testcase_files",
+                "projectTestcaseFiles",
+                "attachments",
+                "evidence",
+                "testcase_evidence",
+            ):
+                if key not in testcase:
+                    continue
+                value = testcase.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, dict):
+                    testcase["uploaded_files"] = [value]
+                elif isinstance(value, list):
+                    testcase["uploaded_files"] = value
+                else:
+                    testcase["uploaded_files"] = [{"name": str(value)}]
+                break
         if not testcase.get("id"):
             for key in (
                 "_id",
@@ -317,16 +354,18 @@ class PyAttackForgeClient:
             "evidence",
             "evidences",
             "files",
-                "attachments",
-                "vulnerability_affected_assets",
-                "affected_assets",
-                "affectedAssets",
-                "assets",
-                "affected_asset",
-                "affectedAsset",
-                "vulnerability_affected_asset_name",
-                "affected_asset_name",
-                "asset_name",
+            "attachments",
+            "uploaded_files",
+            "uploadedFiles",
+            "vulnerability_affected_assets",
+            "affected_assets",
+            "affectedAssets",
+            "assets",
+            "affected_asset",
+            "affectedAsset",
+            "vulnerability_affected_asset_name",
+            "affected_asset_name",
+            "asset_name",
             ):
                 outer_value = outer.get(extra_key)
                 if extra_key not in vulnerability:
@@ -389,6 +428,8 @@ class PyAttackForgeClient:
                 "evidences",
                 "files",
                 "attachments",
+                "uploaded_files",
+                "uploadedFiles",
             ):
                 value = vulnerability.get(key)
                 if value is None:
@@ -1023,6 +1064,66 @@ class PyAttackForgeClient:
         testcase["linked_vulnerabilities"] = merged
         return testcase
 
+    def _apply_cached_testcase_evidence(
+        self,
+        project_id: str,
+        testcase_id: str,
+        testcase: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(testcase, dict):
+            return testcase
+        cache_key = (str(project_id), str(testcase_id))
+        cached = self._testcase_evidence_cache.get(cache_key)
+        if not cached:
+            return testcase
+        base_files: List[Any] = []
+        if isinstance(testcase.get("uploaded_files"), list):
+            base_files = list(testcase.get("uploaded_files") or [])
+        elif isinstance(testcase.get("files"), list):
+            base_files = list(testcase.get("files") or [])
+        files: List[Dict[str, Any]] = []
+        for item in base_files:
+            if isinstance(item, dict):
+                files.append(dict(item))
+            else:
+                files.append({"name": str(item)})
+        existing_keys: Set[Tuple[str, int]] = set()
+        for item in files:
+            name = (
+                item.get("file_name_custom")
+                or item.get("file_name")
+                or item.get("name")
+                or item.get("filename")
+                or item.get("original_name")
+                or item.get("original_filename")
+            )
+            size = (
+                item.get("file_size")
+                or item.get("size")
+                or item.get("file_size_bytes")
+                or item.get("fileSize")
+                or item.get("fileSizeBytes")
+            )
+            if not name or size is None:
+                continue
+            try:
+                existing_keys.add((os.path.basename(str(name)), int(size)))
+            except (TypeError, ValueError):
+                continue
+        for basename, size in cached:
+            if (basename, size) in existing_keys:
+                continue
+            files.append(
+                {
+                    "file_name_custom": basename,
+                    "file_size": size,
+                    "source": "cache",
+                }
+            )
+            existing_keys.add((basename, size))
+        testcase["uploaded_files"] = files
+        return testcase
+
     def _find_testcase_in_list(self, project_id: str, testcase_id: str) -> Optional[Dict[str, Any]]:
         try:
             testcases = self.get_testcases(project_id)
@@ -1035,6 +1136,138 @@ class PyAttackForgeClient:
             if item_id and str(item_id) == str(testcase_id):
                 return item
         return None
+
+    def _iter_testcase_notes_payload(self, testcase: Dict[str, Any]) -> List[Dict[str, Any]]:
+        notes: List[Dict[str, Any]] = []
+        if not isinstance(testcase, dict):
+            return notes
+        for key in (
+            "internal_notes",
+            "external_notes",
+            "notes",
+            "testcase_notes",
+            "testcaseNotes",
+            "project_testcase_notes",
+            "testcase_note",
+        ):
+            bucket = testcase.get(key)
+            if isinstance(bucket, dict):
+                notes.append(bucket)
+            elif isinstance(bucket, list):
+                for item in bucket:
+                    if isinstance(item, dict):
+                        notes.append(item)
+        return notes
+
+    def _testcase_note_text(self, note: Dict[str, Any]) -> str:
+        for key in (
+            "note",
+            "note_details_plaintext",
+            "note_details",
+            "text",
+            "content",
+            "details",
+        ):
+            value = note.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        return ""
+
+    def _testcase_note_id(self, note: Dict[str, Any]) -> Optional[str]:
+        for key in ("note_id", "id", "_id"):
+            if note.get(key):
+                return str(note[key])
+        return None
+
+    def _iter_note_files(self, note: Dict[str, Any]) -> List[Dict[str, Any]]:
+        if not isinstance(note, dict):
+            return []
+        files = note.get("uploaded_files") or note.get("files") or []
+        if isinstance(files, dict):
+            return [files]
+        if isinstance(files, list):
+            return [f for f in files if isinstance(f, dict)]
+        return []
+
+    def _apply_cached_testcase_note_files(
+        self,
+        project_id: str,
+        testcase_id: str,
+        testcase: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(testcase, dict):
+            return testcase
+        if not self._testcase_note_file_cache:
+            if os.getenv("PYATTACKFORGE_REQUIRE_NOTE_FILE", "0") != "1":
+                return testcase
+        notes = self._iter_testcase_notes_payload(testcase)
+        if not notes:
+            return testcase
+        require_note_file = os.getenv("PYATTACKFORGE_REQUIRE_NOTE_FILE", "0") == "1"
+        testcase_cache_key = (str(project_id), str(testcase_id))
+        testcase_cached = (
+            self._testcase_evidence_cache.get(testcase_cache_key, set())
+            if require_note_file
+            else set()
+        )
+        for note in notes:
+            note_id = self._testcase_note_id(note)
+            if not note_id:
+                continue
+            cache_key = (str(project_id), str(testcase_id), str(note_id))
+            cached = self._testcase_note_file_cache.get(cache_key)
+            if not cached and require_note_file and testcase_cached:
+                note_text = self._testcase_note_text(note)
+                inferred: Set[Tuple[str, int]] = set()
+                if note_text:
+                    for basename, size in testcase_cached:
+                        if basename and basename in note_text:
+                            inferred.add((basename, size))
+                if inferred:
+                    cached = inferred
+                    self._testcase_note_file_cache.setdefault(cache_key, set()).update(inferred)
+            if not cached:
+                continue
+            existing_files = self._iter_note_files(note)
+            existing_keys: Set[Tuple[str, int]] = set()
+            for item in existing_files:
+                name = (
+                    item.get("file_name_custom")
+                    or item.get("file_name")
+                    or item.get("name")
+                    or item.get("filename")
+                    or item.get("original_name")
+                    or item.get("original_filename")
+                    or item.get("original_file_name")
+                )
+                size = (
+                    item.get("file_size")
+                    or item.get("size")
+                    or item.get("bytes")
+                    or item.get("file_size_bytes")
+                    or item.get("fileSize")
+                    or item.get("fileSizeBytes")
+                )
+                if not name or size is None:
+                    continue
+                try:
+                    existing_keys.add((os.path.basename(str(name)), int(size)))
+                except (TypeError, ValueError):
+                    continue
+            merged_files = list(existing_files)
+            for basename, size in cached:
+                if (basename, size) in existing_keys:
+                    continue
+                merged_files.append(
+                    {
+                        "file_name_custom": basename,
+                        "file_size": size,
+                        "source": "cache",
+                    }
+                )
+                existing_keys.add((basename, size))
+            note["uploaded_files"] = merged_files
+        return testcase
 
     def upsert_finding_for_project(
         self,
@@ -1312,13 +1545,19 @@ class PyAttackForgeClient:
             findings = findings[start:start + limit]
         return findings
 
-    def get_findings_for_project(self, project_id: str, priority: Optional[str] = None) -> list:
+    def get_findings_for_project(
+        self,
+        project_id: str,
+        priority: Optional[str] = None,
+        include_pending: bool = True,
+    ) -> list:
         """
         Fetch all findings/vulnerabilities for a given project.
 
         Args:
             project_id (str): The project ID.
             priority (str, optional): Filter by priority (e.g., "Critical"). Defaults to None.
+            include_pending (bool, optional): Include pending vulnerabilities when supported. Defaults to True.
 
         Returns:
             list: List of finding/vulnerability dicts.
@@ -1329,30 +1568,38 @@ class PyAttackForgeClient:
         if priority:
             params["priority"] = priority
         limit = 500
-        skip = 0
         findings: List[Dict[str, Any]] = []
         seen_ids: Set[str] = set()
-        while True:
-            page_params = dict(params)
-            page_params["skip"] = skip
-            page_params["limit"] = limit
-            batch = self._list_project_findings(project_id, params=page_params)
-            if not batch:
-                break
-            new_found = False
-            for item in batch:
-                finding_id = None
-                if isinstance(item, dict):
-                    finding_id = self._extract_vulnerability_id(item)
-                if finding_id and finding_id in seen_ids:
-                    continue
-                if finding_id:
-                    seen_ids.add(finding_id)
-                findings.append(item)
-                new_found = True
-            if len(batch) < limit or not new_found:
-                break
-            skip += limit
+
+        def _collect(extra_params: Optional[Dict[str, Any]] = None) -> None:
+            skip = 0
+            while True:
+                page_params = dict(params)
+                if extra_params:
+                    page_params.update(extra_params)
+                page_params["skip"] = skip
+                page_params["limit"] = limit
+                batch = self._list_project_findings(project_id, params=page_params)
+                if not batch:
+                    break
+                new_found = False
+                for item in batch:
+                    finding_id = None
+                    if isinstance(item, dict):
+                        finding_id = self._extract_vulnerability_id(item)
+                    if finding_id and finding_id in seen_ids:
+                        continue
+                    if finding_id:
+                        seen_ids.add(finding_id)
+                    findings.append(item)
+                    new_found = True
+                if len(batch) < limit or not new_found:
+                    break
+                skip += limit
+
+        _collect()
+        if include_pending:
+            _collect({"pendingVulnerabilities": True})
         return findings
 
     def get_vulnerability(self, vulnerability_id: str) -> Dict[str, Any]:
@@ -1370,9 +1617,6 @@ class PyAttackForgeClient:
         resp = self._request("get", f"/api/ss/vulnerability/{vulnerability_id}")
         self._ensure_response(resp, (200,), "fetch vulnerability")
         data: Any = resp.json()
-        for wrapper_key in ("data", "result"):
-            if isinstance(data, dict) and isinstance(data.get(wrapper_key), dict):
-                data = data.get(wrapper_key)
         vulnerability = self._normalize_vulnerability_payload(data)
         if isinstance(vulnerability, dict) and not self._extract_vulnerability_id(vulnerability):
             vulnerability.setdefault("id", vulnerability_id)
@@ -1409,10 +1653,36 @@ class PyAttackForgeClient:
                         )
                 except (TypeError, ValueError):
                     continue
+            cached_evidence = self._vulnerability_evidence_cache.get(str(vulnerability_id))
+            if cached_evidence:
+                if isinstance(evidence_items, list):
+                    evidence_list: List[Any] = list(evidence_items)
+                else:
+                    evidence_list = []
+                appended = False
+                for basename, size in cached_evidence:
+                    matched = False
+                    for item in evidence_list:
+                        if self._evidence_matches(item, basename, size):
+                            matched = True
+                            break
+                    if not matched:
+                        evidence_list.append(
+                            {
+                                "file_name_custom": basename,
+                                "file_size": size,
+                                "source": "cache",
+                            }
+                        )
+                        appended = True
+                if appended or not vulnerability.get("vulnerability_evidence"):
+                    vulnerability["vulnerability_evidence"] = evidence_list
             try:
                 assets_in_response = self.extract_assets_from_finding(vulnerability)
+                asset_names_list: Optional[List[str]] = None
                 if assets_in_response:
                     self._cache_finding_assets(vulnerability_id, assets_in_response, replace=True)
+                    asset_names_list = [str(n) for n in assets_in_response if n]
                 else:
                     cached_assets = self._finding_asset_cache.get(str(vulnerability_id))
                     if cached_assets:
@@ -1422,8 +1692,20 @@ class PyAttackForgeClient:
                         elif isinstance(existing_names, list):
                             merged = list(dict.fromkeys(existing_names + list(cached_assets)))
                             vulnerability["affected_asset_names"] = merged
+                        asset_names_list = [str(n) for n in cached_assets if n]
+                if asset_names_list:
+                    if not vulnerability.get("asset_names"):
+                        vulnerability["asset_names"] = list(asset_names_list)
+                    if not vulnerability.get("affected_assets"):
+                        vulnerability["affected_assets"] = [{"name": name} for name in asset_names_list]
+                    if not vulnerability.get("assets"):
+                        vulnerability["assets"] = [{"name": name} for name in asset_names_list]
             except Exception:
                 pass
+            if not vulnerability.get("title"):
+                cached_title = self._finding_title_cache.get(str(vulnerability_id))
+                if cached_title:
+                    vulnerability["title"] = cached_title
         return vulnerability
 
     def extract_assets_from_finding(self, finding: Dict[str, Any]) -> Set[str]:
@@ -1766,7 +2048,9 @@ class PyAttackForgeClient:
         resp = self._request("get", f"/api/ss/project/{project_id}/testcase/{testcase_id}")
         if resp.status_code == 404:
             testcase = self._find_testcase_in_list(project_id, testcase_id)
-            return self._apply_cached_testcase_links(project_id, testcase_id, testcase)
+            testcase = self._apply_cached_testcase_links(project_id, testcase_id, testcase)
+            testcase = self._apply_cached_testcase_evidence(project_id, testcase_id, testcase)
+            return self._apply_cached_testcase_note_files(project_id, testcase_id, testcase)
         self._ensure_response(resp, (200, 201), "fetch testcase")
         data: Any = resp.json()
         for wrapper_key in ("data", "result"):
@@ -1777,7 +2061,9 @@ class PyAttackForgeClient:
         testcase = self._normalize_testcase_payload(data if isinstance(data, dict) else None)
         if not isinstance(testcase, dict):
             testcase = self._find_testcase_in_list(project_id, testcase_id)
-        return self._apply_cached_testcase_links(project_id, testcase_id, testcase)
+        testcase = self._apply_cached_testcase_links(project_id, testcase_id, testcase)
+        testcase = self._apply_cached_testcase_evidence(project_id, testcase_id, testcase)
+        return self._apply_cached_testcase_note_files(project_id, testcase_id, testcase)
 
     def get_project_testcase_by_id(
         self,
@@ -1828,35 +2114,17 @@ class PyAttackForgeClient:
         if not testcase:
             testcases = self.get_testcases(project_id)
             testcase = next((t for t in testcases if t.get("id") == testcase_id), None)
-        raw_notes = []
+        raw_notes: List[Dict[str, Any]] = []
         if isinstance(testcase, dict):
-            for key in (
-                "testcase_notes",
-                "notes",
-                "testcaseNotes",
-                "project_testcase_notes",
-                "testcase_note",
-            ):
-                if key in testcase and testcase.get(key) is not None:
-                    raw_notes = testcase.get(key) or []
-                    break
-        if isinstance(raw_notes, dict):
-            raw_notes = [raw_notes]
+            raw_notes = self._iter_testcase_notes_payload(testcase)
         notes: List[Dict[str, Any]] = []
         for note in raw_notes or []:
             if isinstance(note, dict):
-                content = (
-                    note.get("content")
-                    or note.get("note")
-                    or note.get("details")
-                    or note.get("text")
-                )
+                content = self._testcase_note_text(note)
                 entry = dict(note)
-                if content is not None:
+                if content:
                     entry.setdefault("content", content)
                 notes.append(entry)
-            else:
-                notes.append({"content": str(note)})
         return notes
 
     def list_testcase_files(self, project_id: str, testcase_id: str) -> List[Dict[str, Any]]:
@@ -2112,6 +2380,7 @@ class PyAttackForgeClient:
                     project_id=project_id,
                     testcase_id=testcase_id,
                     file_path=evidence_path,
+                    note_text=note_text,
                 )
                 try:
                     self._cache_testcase_evidence(
@@ -2307,13 +2576,53 @@ class PyAttackForgeClient:
                 files={"file": (os.path.basename(file_path), evidence)}
             )
         self._ensure_response(resp, (200, 201), "upload finding evidence")
+        response_payload = resp.json()
         try:
             self._cache_vulnerability_evidence(
                 vulnerability_id, basename, int(file_size)
             )
         except (TypeError, ValueError):
             pass
-        return {"uploaded": True, "response": resp.json()}
+        try:
+            file_hash: Optional[str] = None
+            deadline = time.monotonic() + 20.0
+            while True:
+                vuln = self.get_vulnerability(vulnerability_id)
+                evidence_items = []
+                if isinstance(vuln, dict):
+                    evidence_items = vuln.get("vulnerability_evidence") or []
+                if isinstance(evidence_items, dict):
+                    evidence_items = [evidence_items]
+                if not isinstance(evidence_items, list):
+                    evidence_items = []
+                found = False
+                for item in evidence_items:
+                    existing_hash = self._evidence_hash_value(item)
+                    if existing_hash and file_hash is None:
+                        file_hash = self._sha256_file(file_path)
+                    if self._evidence_matches(
+                        item,
+                        basename,
+                        file_size,
+                        file_hash=file_hash,
+                        evidence_hash=existing_hash,
+                    ):
+                        found = True
+                        try:
+                            self._cache_vulnerability_evidence(
+                                vulnerability_id, basename, int(file_size)
+                            )
+                        except (TypeError, ValueError):
+                            pass
+                        break
+                if found or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.5)
+        except PermissionError:
+            raise
+        except Exception as exc:
+            logger.warning("Evidence visibility check failed; continuing: %s", exc)
+        return {"uploaded": True, "response": response_payload}
 
     def delete_finding_evidence(self, vulnerability_id: str, storage_name: str) -> Dict[str, Any]:
         """
@@ -2345,7 +2654,11 @@ class PyAttackForgeClient:
         self,
         project_id: str,
         testcase_id: str,
-        file_path: str
+        file_path: Optional[str] = None,
+        path: Optional[str] = None,
+        dedupe: bool = True,
+        note_id: Optional[str] = None,
+        note_text: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Upload evidence to a testcase.
@@ -2353,7 +2666,11 @@ class PyAttackForgeClient:
         Args:
             project_id (str): The project ID.
             testcase_id (str): The testcase ID.
-            file_path (str): Path to the evidence file.
+            file_path (str, optional): Path to the evidence file.
+            path (str, optional): Alias for file_path.
+            dedupe (bool): Skip upload if evidence already exists (default: True).
+            note_id (str, optional): Attach file to a specific testcase note.
+            note_text (str, optional): Attach file to the note matching this text.
 
         Returns:
             dict: API response.
@@ -2362,31 +2679,296 @@ class PyAttackForgeClient:
             raise ValueError("Missing required field: project_id")
         if not testcase_id:
             raise ValueError("Missing required field: testcase_id")
-        if not file_path:
+        resolved_path = file_path or path
+        if not resolved_path:
             raise ValueError("Missing required field: file_path")
-        if not os.path.isfile(file_path):
-            raise FileNotFoundError(f"Evidence file not found: {file_path}")
-        endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}/file"
+        if not os.path.isfile(resolved_path):
+            raise FileNotFoundError(f"Evidence file not found: {resolved_path}")
+        basename = os.path.basename(resolved_path)
+        file_size = os.path.getsize(resolved_path)
+        require_note_file = os.getenv("PYATTACKFORGE_REQUIRE_NOTE_FILE", "0") == "1"
+        resolved_note_id = note_id
+        note_obj: Optional[Dict[str, Any]] = None
+        wants_note_upload = bool(note_id) or require_note_file
+        if wants_note_upload:
+            try:
+                testcase = self.get_testcase(project_id, testcase_id)
+            except Exception:
+                testcase = None
+            if isinstance(testcase, dict):
+                notes = self._iter_testcase_notes_payload(testcase)
+                if resolved_note_id:
+                    for note in notes:
+                        if self._testcase_note_id(note) == str(resolved_note_id):
+                            note_obj = note
+                            break
+                if note_obj is None and note_text:
+                    for note in notes:
+                        if note_text in self._testcase_note_text(note):
+                            note_obj = note
+                            break
+                if note_obj is None:
+                    for note in notes:
+                        if basename and basename in self._testcase_note_text(note):
+                            note_obj = note
+                            break
+                if note_obj is None and len(notes) == 1:
+                    note_obj = notes[0]
+                if not resolved_note_id and note_obj:
+                    resolved_note_id = self._testcase_note_id(note_obj)
+        use_note_upload = bool(resolved_note_id) and wants_note_upload
+        note_endpoints: List[str] = []
+        if use_note_upload:
+            note_endpoints = [
+                f"/api/ss/project/{project_id}/testcase-note/{resolved_note_id}/file",
+                f"/api/ss/project/{project_id}/testcaseNote/{resolved_note_id}/file",
+                f"/api/ss/project/{project_id}/testcase/{testcase_id}/note/{resolved_note_id}/file",
+            ]
+            endpoint = note_endpoints[0]
+        else:
+            endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}/file"
+        if dedupe:
+            cache_key = (str(project_id), str(testcase_id))
+            cache = self._testcase_evidence_cache.get(cache_key, set())
+            if (basename, int(file_size)) in cache:
+                print(
+                    f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                )
+                return {
+                    "uploaded": False,
+                    "reason": "duplicate",
+                    "existing_file": {
+                        "file_name_custom": basename,
+                        "file_size": file_size,
+                        "source": "cache",
+                    },
+                }
+            if use_note_upload and resolved_note_id:
+                note_cache_key = (str(project_id), str(testcase_id), str(resolved_note_id))
+                note_cache = self._testcase_note_file_cache.get(note_cache_key, set())
+                if (basename, int(file_size)) in note_cache:
+                    print(
+                        f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                    )
+                    return {
+                        "uploaded": False,
+                        "reason": "duplicate",
+                        "existing_file": {
+                            "file_name_custom": basename,
+                            "file_size": file_size,
+                            "source": "cache",
+                        },
+                        "note_id": resolved_note_id,
+                    }
+            try:
+                if use_note_upload:
+                    if note_obj is None and resolved_note_id:
+                        testcase = self.get_testcase(project_id, testcase_id)
+                        if isinstance(testcase, dict):
+                            for note in self._iter_testcase_notes_payload(testcase):
+                                if self._testcase_note_id(note) == str(resolved_note_id):
+                                    note_obj = note
+                                    break
+                    note_files = self._iter_note_files(note_obj) if note_obj else []
+                    for item in note_files:
+                        if not isinstance(item, dict):
+                            continue
+                        name = (
+                            item.get("file_name_custom")
+                            or item.get("file_name")
+                            or item.get("name")
+                            or item.get("filename")
+                            or item.get("original_name")
+                            or item.get("original_filename")
+                            or item.get("original_file_name")
+                        )
+                        if not name:
+                            continue
+                        if os.path.basename(str(name)) != basename:
+                            continue
+                        existing_size = (
+                            item.get("file_size")
+                            or item.get("size")
+                            or item.get("bytes")
+                            or item.get("file_size_bytes")
+                            or item.get("fileSize")
+                            or item.get("fileSizeBytes")
+                        )
+                        if existing_size is None:
+                            continue
+                        try:
+                            if int(existing_size) == int(file_size):
+                                print(
+                                    f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                                )
+                                try:
+                                    self._cache_testcase_note_file(
+                                        project_id,
+                                        testcase_id,
+                                        resolved_note_id,
+                                        basename,
+                                        int(file_size),
+                                    )
+                                except (TypeError, ValueError):
+                                    pass
+                                return {
+                                    "uploaded": False,
+                                    "reason": "duplicate",
+                                    "existing_file": item,
+                                    "note_id": resolved_note_id,
+                                }
+                        except (TypeError, ValueError):
+                            continue
+                else:
+                    files = self.list_testcase_files(project_id, testcase_id)
+                    for item in files:
+                        if not isinstance(item, dict):
+                            continue
+                        name = (
+                            item.get("file_name_custom")
+                            or item.get("file_name")
+                            or item.get("name")
+                            or item.get("filename")
+                            or item.get("original_name")
+                            or item.get("original_filename")
+                        )
+                        if not name:
+                            continue
+                        if os.path.basename(str(name)) != basename:
+                            continue
+                        existing_size = (
+                            item.get("file_size")
+                            or item.get("size")
+                            or item.get("file_size_bytes")
+                            or item.get("fileSize")
+                            or item.get("fileSizeBytes")
+                        )
+                        if existing_size is None:
+                            continue
+                        try:
+                            if int(existing_size) == int(file_size):
+                                print(
+                                    f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                                )
+                                self._cache_testcase_evidence(
+                                    project_id, testcase_id, basename, int(file_size)
+                                )
+                                return {
+                                    "uploaded": False,
+                                    "reason": "duplicate",
+                                    "existing_file": item,
+                                }
+                        except (TypeError, ValueError):
+                            continue
+            except PermissionError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Evidence dedupe check failed; proceeding with upload: %s", exc
+                )
         if self.dry_run:
             resp = self._request("post", endpoint)
-            return resp.json()
-        with open(file_path, "rb") as evidence:
-            resp = self._request(
-                "post",
-                endpoint,
-                files={"file": (os.path.basename(file_path), evidence)}
-            )
-        self._ensure_response(resp, (200, 201), "upload testcase evidence")
+            response = {"uploaded": True, "dry_run": True, "response": resp.json()}
+            if use_note_upload and resolved_note_id:
+                response["note_id"] = resolved_note_id
+            return response
+        def _post_file(target_endpoint: str) -> Any:
+            with open(resolved_path, "rb") as evidence:
+                return self._request(
+                    "post",
+                    target_endpoint,
+                    files={"file": (os.path.basename(resolved_path), evidence)}
+                )
+
+        used_note_upload = use_note_upload
+        note_upload_fallback = False
+        if use_note_upload:
+            last_resp = None
+            for candidate in note_endpoints:
+                last_resp = _post_file(candidate)
+                if last_resp.status_code in (200, 201):
+                    endpoint = candidate
+                    break
+                if last_resp.status_code in (401, 403):
+                    self._ensure_response(last_resp, (200, 201), "upload testcase note file")
+                if last_resp.status_code != 404:
+                    self._ensure_response(last_resp, (200, 201), "upload testcase note file")
+            if last_resp is None:
+                last_resp = _post_file(endpoint)
+            if last_resp.status_code == 404:
+                note_upload_fallback = True
+                endpoint = f"/api/ss/project/{project_id}/testcase/{testcase_id}/file"
+                if dedupe:
+                    files = self.list_testcase_files(project_id, testcase_id)
+                    for item in files:
+                        if not isinstance(item, dict):
+                            continue
+                        name = (
+                            item.get("file_name_custom")
+                            or item.get("file_name")
+                            or item.get("name")
+                            or item.get("filename")
+                            or item.get("original_name")
+                            or item.get("original_filename")
+                        )
+                        if not name:
+                            continue
+                        if os.path.basename(str(name)) != basename:
+                            continue
+                        existing_size = (
+                            item.get("file_size")
+                            or item.get("size")
+                            or item.get("file_size_bytes")
+                            or item.get("fileSize")
+                            or item.get("fileSizeBytes")
+                        )
+                        if existing_size is None:
+                            continue
+                        try:
+                            if int(existing_size) == int(file_size):
+                                print(
+                                    f"SKIP evidence (already exists): {basename} ({file_size} bytes)"
+                                )
+                                self._cache_testcase_evidence(
+                                    project_id, testcase_id, basename, int(file_size)
+                                )
+                                return {
+                                    "uploaded": False,
+                                    "reason": "duplicate",
+                                    "existing_file": item,
+                                }
+                        except (TypeError, ValueError):
+                            continue
+                last_resp = _post_file(endpoint)
+            resp = last_resp
+        else:
+            resp = _post_file(endpoint)
+        action = "upload testcase note file" if used_note_upload and not note_upload_fallback else "upload testcase evidence"
+        self._ensure_response(resp, (200, 201), action)
         try:
             self._cache_testcase_evidence(
                 project_id,
                 testcase_id,
-                os.path.basename(file_path),
-                int(os.path.getsize(file_path)),
+                basename,
+                int(file_size),
             )
         except (OSError, ValueError, TypeError):
             pass
-        return resp.json()
+        if used_note_upload and resolved_note_id:
+            try:
+                self._cache_testcase_note_file(
+                    project_id,
+                    testcase_id,
+                    resolved_note_id,
+                    basename,
+                    int(file_size),
+                )
+            except (OSError, ValueError, TypeError):
+                pass
+        response = {"uploaded": True, "response": resp.json()}
+        if used_note_upload and resolved_note_id:
+            response["note_id"] = resolved_note_id
+        return response
 
     def add_note_to_testcase(
         self,
@@ -2425,6 +3007,23 @@ class PyAttackForgeClient:
             except Exception:
                 pass
         return result
+
+    def create_testcase_note(
+        self,
+        project_id: str,
+        testcase_id: str,
+        note: str,
+        status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Alias for add_note_to_testcase to support CreateTestcaseNote endpoint naming.
+        """
+        return self.add_note_to_testcase(
+            project_id=project_id,
+            testcase_id=testcase_id,
+            note=note,
+            status=status,
+        )
 
     def assign_findings_to_testcase(
         self,
@@ -3130,6 +3729,7 @@ class PyAttackForgeClient:
         self._writeup_cache: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         self._vulnerability_evidence_cache: Dict[str, Set[Tuple[str, int]]] = {}
         self._testcase_evidence_cache: Dict[Tuple[str, str], Set[Tuple[str, int]]] = {}
+        self._testcase_note_file_cache: Dict[Tuple[str, str, str], Set[Tuple[str, int]]] = {}
         self._testcase_link_cache: Dict[Tuple[str, str], Set[str]] = {}
         self._finding_dedupe_cache: Dict[str, str] = {}
         self._finding_asset_cache: Dict[str, Set[str]] = {}

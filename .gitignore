@@ -215,3 +215,8 @@ attackforgePush.py
 
 .vscode/
 .codex/
+ci.sh
+AGENTS.md
+SPEC.md
+docs/
+PATCH.md
