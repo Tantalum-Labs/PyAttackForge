@@ -15,7 +15,7 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 - `upsert_finding_by_title` enforces asset-agnostic payloads by default; set `validate_asset_agnostic=False` to disable.
 - New findings default `custom_fields` substatus to `Observed` (configurable via `ATTACKFORGE_FINDINGS_SUBSTATUS_KEY/VALUE`).
 - Newly created vulnerabilities appear under `pendingVulnerabilities=true` in list endpoints for this tenant; dedup + tests include pending results.
-- Updating `affected_assets` on vulnerabilities requires `projectId` and entries with either `assetId` or `assetName` (not both).
+- Updating `affected_assets` on vulnerabilities requires entries with either `assetId` or `assetName` (not both). Some tenants reject `projectId` in update payloads, so the SDK omits it when updating assets.
 - Workspace file downloads require the storage name (`full_name`) returned by `GetProjectWorkspace`.
 - Project testcase file uploads via SSAPI return status only and do not surface in UI metadata for this tenant. The SDK supports UI uploads (`/api/projects/:projectId/upload/testcase/:testcaseId`) when `ATTACKFORGE_UI_TOKEN` is provided; tests verify visibility via `/api/projects/:projectId/meta/testcase?fk=:testcaseId`.
 - Project testcase notes do not have a SSAPI list endpoint. When `dedupe=True`, the SDK queries the UI notes endpoint (`/api/projects/:projectId/testcases/:testcaseId/notes`) if a UI token is provided.

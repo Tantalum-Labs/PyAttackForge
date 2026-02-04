@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Iterator, Tuple
 import time
 import httpx
 
@@ -52,6 +52,42 @@ class AttackForgeTransport:
             )
         return self._http2_client
 
+    def _iter_file_objects(self, files: Dict[str, Any]) -> Iterator[Any]:
+        for value in files.values():
+            file_obj = None
+            if hasattr(value, "read"):
+                file_obj = value
+            elif isinstance(value, tuple) and len(value) >= 2 and hasattr(value[1], "read"):
+                file_obj = value[1]
+            if file_obj is not None:
+                yield file_obj
+
+    def _capture_file_positions(self, files: Dict[str, Any]) -> Tuple[Dict[int, Optional[int]], bool]:
+        positions: Dict[int, Optional[int]] = {}
+        reusable = True
+        for file_obj in self._iter_file_objects(files):
+            try:
+                if hasattr(file_obj, "seekable") and not file_obj.seekable():
+                    reusable = False
+                positions[id(file_obj)] = file_obj.tell()
+            except Exception:
+                positions[id(file_obj)] = None
+                reusable = False
+        return positions, reusable
+
+    def _rewind_files(self, files: Dict[str, Any], positions: Dict[int, Optional[int]]) -> bool:
+        ok = True
+        for file_obj in self._iter_file_objects(files):
+            pos = positions.get(id(file_obj))
+            if pos is None:
+                ok = False
+                continue
+            try:
+                file_obj.seek(pos)
+            except Exception:
+                ok = False
+        return ok
+
     def request(
         self,
         method: str,
@@ -68,8 +104,16 @@ class AttackForgeTransport:
         attempt = 0
         max_retries = self._config.max_retries if retries is None else retries
         backoff = self._config.backoff_factor
+        file_positions: Optional[Dict[int, Optional[int]]] = None
+        files_reusable = True
+        if files:
+            file_positions, files_reusable = self._capture_file_positions(files)
+            if not files_reusable:
+                max_retries = 0
         while True:
             try:
+                if files and attempt > 0 and files_reusable:
+                    self._rewind_files(files, file_positions or {})
                 request_headers = None
                 if headers:
                     request_headers = headers
@@ -96,19 +140,21 @@ class AttackForgeTransport:
                 continue
 
             if response.status_code >= 500 and files:
-                try:
-                    response = self._get_http2_client().request(
-                        method=method,
-                        url=path,
-                        params=params,
-                        json=json,
-                        files=files,
-                        data=data,
-                        headers=request_headers,
-                        timeout=timeout,
-                    )
-                except httpx.HTTPError:
-                    pass
+                if files_reusable:
+                    self._rewind_files(files, file_positions or {})
+                    try:
+                        response = self._get_http2_client().request(
+                            method=method,
+                            url=path,
+                            params=params,
+                            json=json,
+                            files=files,
+                            data=data,
+                            headers=request_headers,
+                            timeout=timeout,
+                        )
+                    except httpx.HTTPError:
+                        pass
 
             if response.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
                 time.sleep(backoff * (2 ** attempt))

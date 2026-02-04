@@ -226,3 +226,4 @@ PATCH.md
 sample data/
 library.py
 writeups.json
+*.code-workspace

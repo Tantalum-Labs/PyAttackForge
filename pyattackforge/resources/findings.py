@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 import os
 from datetime import datetime
+import time
 
 from ..cache import TTLCache
 from .base import BaseResource
@@ -247,18 +248,29 @@ class FindingsResource(BaseResource):
             return {"action": "noop", "existing": match}
 
         merged = sorted(existing_assets.union(new_assets))
-        asset_ids = self._resolve_project_asset_ids(project_id, merged)
-        payload_assets = []
-        for name in merged:
-            asset_id = asset_ids.get(name)
-            if asset_id:
-                payload_assets.append({"assetId": asset_id})
-            else:
-                payload_assets.append({"assetName": name})
-        payload = {"affected_assets": payload_assets}
+        asset_ids = {}
+        asset_ids.update(self._extract_asset_id_map_from_finding(match))
+        asset_ids.update(self._map_names_to_ids_from_payload(affected_assets, create_payload))
         if update_payload:
-            payload.update(update_payload)
-        result = self.update_vulnerability(match.get("vulnerability_id") or match.get("id"), payload)
+            asset_ids.update(self._map_names_to_ids_from_payload(affected_assets, update_payload))
+        resolved = self._resolve_project_asset_ids_with_retry(project_id, merged)
+        asset_ids.update(resolved)
+        payload_assets = self._build_affected_assets_payload(merged, asset_ids)
+        payload = dict(update_payload or {})
+        payload.pop("affected_assets", None)
+        payload.pop("vulnerability_affected_assets", None)
+        payload.pop("projectId", None)
+        payload.pop("project_id", None)
+        payload["affected_assets"] = payload_assets
+        vuln_id = match.get("vulnerability_id") or match.get("id")
+        result = self.update_vulnerability(vuln_id, payload)
+        if missing:
+            result = self._ensure_assets_on_vulnerability(
+                vulnerability_id=vuln_id,
+                project_id=project_id,
+                desired_assets=merged,
+                asset_ids=asset_ids,
+            )
         return {"action": "update", "result": result, "added_assets": missing}
 
     def _normalize_title(self, title: str) -> str:
@@ -376,9 +388,141 @@ class FindingsResource(BaseResource):
             if not isinstance(entry, dict):
                 continue
             name = entry.get("name")
-            asset_id = entry.get("asset_id") or entry.get("assetId")
+            asset_id = entry.get("id") or entry.get("asset_id") or entry.get("assetId")
             if isinstance(name, str) and isinstance(asset_id, str):
+                stripped = name.strip()
+                if stripped:
+                    mapping[stripped] = asset_id
+        return mapping
+
+    def _resolve_project_asset_ids_with_retry(
+        self,
+        project_id: str,
+        asset_names: Sequence[str],
+        *,
+        attempts: int = 3,
+        delay: float = 0.5,
+    ) -> Dict[str, str]:
+        seen: set = set()
+        unique_names: List[str] = []
+        for value in asset_names:
+            if not isinstance(value, str):
+                continue
+            name = value.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            unique_names.append(name)
+        if not unique_names:
+            return {}
+        mapping = self._resolve_project_asset_ids(project_id, unique_names)
+        missing = [name for name in unique_names if name not in mapping]
+        if not missing or attempts <= 1:
+            return mapping
+        for _ in range(attempts - 1):
+            time.sleep(delay)
+            refreshed = self._resolve_project_asset_ids(project_id, missing)
+            mapping.update(refreshed)
+            missing = [name for name in missing if name not in mapping]
+            if not missing:
+                break
+        return mapping
+
+    def _build_affected_assets_payload(self, asset_names: Sequence[str], asset_ids: Dict[str, str]) -> List[Dict[str, Any]]:
+        payload_assets: List[Dict[str, Any]] = []
+        for name in asset_names:
+            if not isinstance(name, str):
+                continue
+            stripped = name.strip()
+            if not stripped:
+                continue
+            asset_id = asset_ids.get(stripped)
+            if asset_id:
+                payload_assets.append({"assetId": asset_id})
+            else:
+                payload_assets.append({"assetName": stripped})
+        return payload_assets
+
+    def _ensure_assets_on_vulnerability(
+        self,
+        *,
+        vulnerability_id: str,
+        project_id: str,
+        desired_assets: Sequence[str],
+        asset_ids: Dict[str, str],
+        attempts: int = 3,
+        delay: float = 1.0,
+    ) -> Any:
+        last_result: Any = None
+        for _ in range(max(attempts, 1)):
+            try:
+                vuln = self.get_vulnerability(vulnerability_id)
+            except Exception:
+                break
+            current_assets = self._extract_asset_names_from_finding(vuln)
+            missing = [name for name in desired_assets if name not in current_assets]
+            if not missing:
+                return last_result if last_result is not None else vuln
+            refreshed = self._resolve_project_asset_ids_with_retry(
+                project_id, missing, attempts=2, delay=delay
+            )
+            asset_ids.update(refreshed)
+            payload_assets = self._build_affected_assets_payload(desired_assets, asset_ids)
+            payload = {"affected_assets": payload_assets}
+            last_result = self.update_vulnerability(vulnerability_id, payload)
+            time.sleep(delay)
+        return last_result
+
+    def _extract_asset_id_map_from_finding(self, finding: Dict[str, Any]) -> Dict[str, str]:
+        raw = finding.get("vulnerability_affected_assets") or finding.get("affected_assets") or []
+        return self._extract_asset_id_map(raw if isinstance(raw, list) else [])
+
+    def _extract_asset_id_map(self, assets: Sequence[Any]) -> Dict[str, str]:
+        mapping: Dict[str, str] = {}
+        for item in assets:
+            if not isinstance(item, dict):
+                continue
+            name = None
+            asset_id = None
+            for key in ("assetName", "name"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    name = value.strip()
+                    break
+            asset_obj = item.get("asset")
+            if isinstance(asset_obj, dict):
+                obj_name = asset_obj.get("name")
+                if isinstance(obj_name, str) and obj_name.strip():
+                    name = obj_name.strip()
+                obj_id = asset_obj.get("id") or asset_obj.get("asset_id") or asset_obj.get("assetId")
+                if isinstance(obj_id, str) and obj_id.strip():
+                    asset_id = obj_id.strip()
+            for key in ("assetId", "asset_id", "id"):
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    asset_id = value.strip()
+                    break
+            if name and asset_id:
                 mapping[name] = asset_id
+        return mapping
+
+    def _map_names_to_ids_from_payload(
+        self, asset_names: Sequence[Any], payload: Optional[Dict[str, Any]]
+    ) -> Dict[str, str]:
+        if not isinstance(payload, dict):
+            return {}
+        payload_assets = payload.get("affected_assets") or payload.get("vulnerability_affected_assets") or []
+        if not isinstance(payload_assets, list):
+            return {}
+        mapping = self._extract_asset_id_map(payload_assets)
+        names_list = [name for name in asset_names if isinstance(name, str) and name.strip()]
+        if names_list and len(names_list) == len(payload_assets):
+            for name, entry in zip(names_list, payload_assets):
+                if name in mapping or not isinstance(entry, dict):
+                    continue
+                asset_id = entry.get("assetId") or entry.get("asset_id") or entry.get("id")
+                if isinstance(asset_id, str) and asset_id.strip():
+                    mapping[name] = asset_id.strip()
         return mapping
 
     def _enforce_vulnerability_evidence_fifo(
