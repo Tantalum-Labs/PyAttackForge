@@ -146,11 +146,3 @@ Add missing writeup custom fields (Settings -> Writeups) based on the import fil
 ```bash
 python3 scripts/import_writeups.py --input writeups.json --ensure-writeup-fields
 ```
-
-Import DoppleSpy findings into a project:
-
-```bash
-python3 scripts/import_dopplespy_findings.py --input "sample data/DoppleSpy/tantalumlabs.io-results.json" --project-title "Tantalum Labs Fake Pentest"
-```
-
-The DoppleSpy import uses mapping definitions in `PyAttackForge/scripts/library.py` to translate source titles to approved writeup titles.
