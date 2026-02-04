@@ -18,3 +18,18 @@ class GroupsResource(BaseResource):
 
     def get_group(self, group_id: str, params: Optional[Dict[str, Any]] = None) -> Any:
         return self._get(f"/api/ss/group/{group_id}", params=params)
+
+    def update_group(self, group_id: str, payload: Dict[str, Any]) -> Any:
+        return self._put(f"/api/ss/group/{group_id}", json=payload)
+
+    def archive_group(self, group_id: str) -> Any:
+        return self._put(f"/api/ss/group/{group_id}/archive")
+
+    def restore_group(self, group_id: str) -> Any:
+        return self._put(f"/api/ss/group/{group_id}/restore")
+
+    def get_group_projects(self, group_id: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        return self._get(f"/api/ss/groups/{group_id}/projects", params=params)
+
+    def get_group_vulnerabilities(self, group_id: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        return self._get(f"/api/ss/groups/{group_id}/vulnerabilities", params=params)

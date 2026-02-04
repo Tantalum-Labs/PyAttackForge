@@ -15,6 +15,7 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 - `upsert_finding_by_title` enforces asset-agnostic payloads by default; set `validate_asset_agnostic=False` to disable.
 - New findings default `custom_fields` substatus to `Observed` (configurable via `ATTACKFORGE_FINDINGS_SUBSTATUS_KEY/VALUE`).
 - Newly created vulnerabilities appear under `pendingVulnerabilities=true` in list endpoints for this tenant; dedup + tests include pending results.
+- Group vulnerability listings may omit pending vulnerabilities on some tenants; live tests treat this as a skip condition.
 - Updating `affected_assets` on vulnerabilities requires entries with either `assetId` or `assetName` (not both). Some tenants reject `projectId` in update payloads, so the SDK omits it when updating assets.
 - Workspace file downloads require the storage name (`full_name`) returned by `GetProjectWorkspace`.
 - Project testcase file uploads via SSAPI return status only and do not surface in UI metadata for this tenant. The SDK supports UI uploads (`/api/projects/:projectId/upload/testcase/:testcaseId`) when `ATTACKFORGE_UI_TOKEN` is provided; tests verify visibility via `/api/projects/:projectId/meta/testcase?fk=:testcaseId`.
@@ -25,8 +26,7 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 - Remediation note file downloads: SSAPI download endpoint returns HTTP 500 for known files when only original filename/hash is available. A report-data (base64) fallback is used when possible.
 
 ## Out Of Scope (explicitly skipped)
-- Project requests, retest flows, project emails, and project audit logs.
-- Portfolios, analytics, and application audit logs.
+- None currently.
 
 ## Coverage Matrix
 
@@ -46,7 +46,7 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 | GetAssets | GET | `/api/ss/assets` | List assets | Implemented |
 | GetAssetInLibrary | GET | `/api/ss/library/asset?id=:id` | Get single library asset | Implemented |
 | GetAssetLibraryAssets | POST | `/api/ss/library/assets` | Query assets in library | Implemented |
-| GetAssetsByGroup | GET | `/api/ss/assets/group/:id` | Group-scoped assets (group out of scope) | Skipped |
+| GetAssetsByGroup | GET | `/api/ss/assets/group/:id` | Group-scoped assets | Planned |
 
 ### Projects
 | Endpoint | Method | Path | Notes | Status |
@@ -78,7 +78,7 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 | InviteUsersToProjectTeam | POST | `/api/ss/project/:id/team/invite` | Invite multiple users | Implemented |
 | RemoveProjectTeamMembers | PUT | `/api/ss/project/:id/team/remove` | Remove team members | Implemented |
 | UpdateUserAccessOnProject | PUT | `/api/ss/project/:project_id/access/:user_id` | Update project access | Implemented |
-| GetProjectsByGroup | GET | `/api/ss/groups/:id/projects` | Group-scoped projects (group out of scope) | Skipped |
+| GetProjectsByGroup | GET | `/api/ss/groups/:id/projects` | Group-scoped projects | Implemented |
 
 ### Groups
 | Endpoint | Method | Path | Notes | Status |
@@ -86,6 +86,11 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 | GetGroups | GET | `/api/ss/groups` | List groups | Implemented |
 | GetGroupById | GET | `/api/ss/group/:id` | Get group details | Implemented |
 | CreateGroup | POST | `/api/ss/group` | Create group | Implemented |
+| UpdateGroup | PUT | `/api/ss/group/:id` | Update group | Implemented |
+| ArchiveGroup | PUT | `/api/ss/group/:id/archive` | Archive group | Implemented |
+| RestoreGroup | PUT | `/api/ss/group/:id/restore` | Restore group | Implemented |
+| GetGroupProjects | GET | `/api/ss/groups/:id/projects` | List projects in group | Implemented |
+| GetGroupVulnerabilities | GET | `/api/ss/groups/:id/vulnerabilities` | List vulnerabilities in group | Implemented |
 
 ### Findings
 | Endpoint | Method | Path | Notes | Status |
@@ -97,7 +102,7 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 | GetVulnerabilityById | GET | `/api/ss/vulnerability/:id` | Get vulnerability | Implemented |
 | GetProjectVulnerabilitiesById | GET | `/api/ss/project/:id/vulnerabilities` | List project vulnerabilities | Implemented |
 | GetVulnerabilitiesByAssetName | GET | `/api/ss/vulnerabilities/asset` | List by asset | Implemented |
-| GetVulnerabilitiesByGroup | GET | `/api/ss/groups/:id/vulnerabilities` | Group-scoped vulnerabilities (group out of scope) | Skipped |
+| GetVulnerabilitiesByGroup | GET | `/api/ss/groups/:id/vulnerabilities` | Group-scoped vulnerabilities | Implemented |
 | UpdateVulnerabilityById | PUT | `/api/ss/vulnerability/:id` | Update finding | Implemented |
 | UpdateVulnerabilityWithLibrary | PUT | `/api/ss/vulnerability-with-library/:vulnerabilityId` | Update from writeup | Implemented |
 | UpdateVulnerabilitySLAs | PUT | `/api/ss/vulnerabilities/sla` | SLA updates | Implemented |
@@ -177,3 +182,78 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 | GetProjectReportData | POST | `/api/ss/project/:id/report/:type` | Report output with filter body | Implemented |
 | UpdateExecSummaryNotes | PUT | `/api/ss/project/:projectId/execSummaryNotes` | Executive summary notes | Implemented |
 | UpdateProjectById (report fields) | PUT | `/api/ss/project/:id` | Executive summary + reporting/summary custom fields | Implemented |
+
+### Analytics
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| GetMostCommonVulnerabilities | GET | `/api/ss/analytics/common/vulnerabilities` | Common vulnerabilities analytics | Planned |
+| GetMostFailedTestcases | GET | `/api/ss/analytics/failed/testcases` | Failed testcases analytics | Planned |
+| GetMostVulnerableAssets | GET | `/api/ss/analytics/vulnerable/assets` | Vulnerable assets analytics | Planned |
+
+### Audit Logs
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| GetApplicationAuditLogs | GET | `/api/ss/auditlogs` | Application audit logs | Planned |
+| GetProjectAuditLogs | GET | `/api/ss/project/:id/auditlogs` | Project audit logs | Planned |
+
+### Config Forms
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| GetFormConfig | GET | `/api/ss/config/form/:id` | Get form config | Planned |
+| UpdateFormConfig | PUT | `/api/ss/config/form/:id` | Update form config | Planned |
+| GetVulnerabilityFormConfig | GET | `/api/ss/config/form/vulnerability` | Get vulnerability form config | Planned |
+| UpdateVulnerabilityFormConfig | PUT | `/api/ss/config/form/vulnerability` | Update vulnerability form config | Planned |
+
+### Email
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| GetEmailTemplates | GET | `/api/ss/email` | Email templates | Planned |
+
+### API Keys
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| RegenerateApiKey | POST | `/api/ss/apikey/regenerate` | Regenerate API key | Planned |
+
+### Project Emails
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| SendDailyCommencementEmail | GET | `/api/ss/project/:id/sendDailyCommencementEmail` | Send daily commencement email | Planned |
+| SendDailyCompletionEmail | GET | `/api/ss/project/:id/sendDailyCompletionEmail` | Send daily completion email | Planned |
+
+### Project Requests
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| GetProjectRequests | GET | `/api/ss/requests` | List project requests | Planned |
+| GetProjectRequestById | GET | `/api/ss/request/:id` | Get project request | Planned |
+| CreateProjectRequest | POST | `/api/ss/request` | Create project request | Planned |
+| UpdateProjectRequest | PUT | `/api/ss/request/:id` | Update project request | Planned |
+| ApproveProjectRequest | PUT | `/api/ss/request/:id/approve` | Approve project request | Planned |
+| RejectProjectRequest | PUT | `/api/ss/request/:id/reject` | Reject project request | Planned |
+
+### Project Retest
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| RequestNewProjectRetest | POST | `/api/ss/project/:id/retest/request` | Request retest round | Planned |
+| UpdateProjectRetestRound | PUT | `/api/ss/project/:id/retest/:id` | Update retest round | Planned |
+| CancelProjectRetestRound | POST | `/api/ss/project/:id/retest/:id/cancel` | Cancel retest round | Planned |
+| CompleteProjectRetestRound | POST | `/api/ss/project/:id/retest/:id/complete` | Complete retest round | Planned |
+
+### Portfolios
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| GetPortfolios | GET | `/api/ss/portfolios` | List portfolios | Planned |
+| GetPortfolioById | GET | `/api/ss/portfolio/:id` | Get portfolio | Planned |
+| GetPortfolioStream | GET | `/api/ss/portfolio/stream/:id` | Portfolio stream | Planned |
+| CreatePortfolio | POST | `/api/ss/portfolio` | Create portfolio | Planned |
+| UpdatePortfolio | PUT | `/api/ss/portfolio/:id` | Update portfolio | Planned |
+| ArchivePortfolio | PUT | `/api/ss/portfolio/:id/archive` | Archive portfolio | Planned |
+
+### Utilities
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| MarkdownToRichtext | POST | `/api/ss/utils/markdown-to-richtext` | Convert markdown to richtext | Planned |
+
+### Library Evidence
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| DownloadVulnerabilityLibraryEvidence | GET | `/api/ss/library/:id/evidence/:id` | Download library evidence | Planned |

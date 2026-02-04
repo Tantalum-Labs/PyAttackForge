@@ -127,6 +127,25 @@ with AttackForgeClient() as client:
     client.link_vulnerability_to_testcases("project_id", "vuln_id", ["testcase_id"])
 ```
 
+Group management (examples):
+
+```python
+from pyattackforge import AttackForgeClient
+
+with AttackForgeClient() as client:
+    group = client.groups.create_group({
+        "name": "SDK Group",
+        "group_owner": "Owner Name",
+        "primary_contact_name": "Owner Name",
+        "primary_contact_email": "owner@example.com",
+        "primary_contact_number": "0000000000",
+    })
+    group_id = group.get("group_id") or group.get("id")
+    client.projects.add_project_to_group("project_id", group_id)
+    client.groups.get_group_projects(group_id)
+    client.groups.get_group_vulnerabilities(group_id)
+```
+
 ## Testing
 
 Unit tests:

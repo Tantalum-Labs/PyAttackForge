@@ -33,6 +33,9 @@ class ProjectsResource(BaseResource):
     def get_projects(self, params: Optional[Dict[str, Any]] = None) -> Any:
         return self._get("/api/ss/projects", params=params)
 
+    def get_projects_by_group(self, group_id: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        return self._get(f"/api/ss/groups/{group_id}/projects", params=params)
+
     def get_projects_and_vulnerabilities(self, params: Optional[Dict[str, Any]] = None) -> Any:
         return self._get("/api/ss/projects-and-vulnerabilities", params=params)
 
@@ -148,6 +151,8 @@ class ProjectsResource(BaseResource):
             project = project["data"]
         if isinstance(project, dict) and isinstance(project.get("project"), dict):
             project = project["project"]
+        if not isinstance(project, dict):
+            raise ValueError("Project response is not a dict; cannot resolve groups")
         groups = project.get("groups") or project.get("project_groups") or []
         group_ids: List[str] = []
         if isinstance(groups, list):

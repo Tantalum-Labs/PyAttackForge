@@ -77,6 +77,7 @@ Projects (`ProjectsResource`)
 - `create_project(payload)`
 - `get_project(project_id, params=None, force_refresh=False)`
 - `get_projects(params=None)`
+- `get_projects_by_group(group_id, params=None)`
 - `get_projects_and_vulnerabilities(params=None)`
 - `update_project(project_id, payload)`
 - `archive_project(project_id)`
@@ -109,6 +110,11 @@ Groups (`GroupsResource`)
 - `get_groups(params=None)`
 - `get_group(group_id, params=None)`
 - `create_group(payload)`
+- `update_group(group_id, payload)`
+- `archive_group(group_id)`
+- `restore_group(group_id)`
+- `get_group_projects(group_id, params=None)`
+- `get_group_vulnerabilities(group_id, params=None)`
 
 Findings (`FindingsResource`)
 - `create_vulnerability(payload)`
@@ -116,6 +122,7 @@ Findings (`FindingsResource`)
 - `create_vulnerability_with_library(payload)`
 - `get_vulnerabilities(params=None)`
 - `get_vulnerability(vulnerability_id, params=None)`
+- `get_vulnerabilities_by_group(group_id, params=None)`
 - `get_project_vulnerabilities(project_id, params=None)`
 - `get_project_vulnerabilities_all(project_id, params=None)`
 - `find_project_vulnerability_by_title(project_id, title, include_pending=True)`

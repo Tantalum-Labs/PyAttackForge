@@ -36,6 +36,9 @@ class FindingsResource(BaseResource):
     def get_vulnerability(self, vulnerability_id: str, params: Optional[Dict[str, Any]] = None) -> Any:
         return self._get(f"/api/ss/vulnerability/{vulnerability_id}", params=params)
 
+    def get_vulnerabilities_by_group(self, group_id: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        return self._get(f"/api/ss/groups/{group_id}/vulnerabilities", params=params)
+
     def get_project_vulnerabilities(self, project_id: str, params: Optional[Dict[str, Any]] = None) -> Any:
         return self._get(f"/api/ss/project/{project_id}/vulnerabilities", params=params)
 
