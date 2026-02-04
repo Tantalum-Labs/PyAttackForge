@@ -16,7 +16,7 @@ class ClientConfig:
     timeout: float = 30.0
     max_retries: int = 3
     backoff_factor: float = 0.5
-    user_agent: str = "pyattackforge/0.2.0"
+    user_agent: str = "pyattackforge/0.2.1"
     http2: bool = True
     # Default visibility for newly created findings. False = pending/hidden.
     default_findings_visible: bool = False
