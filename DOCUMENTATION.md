@@ -7,7 +7,7 @@ PyAttackForge is a Python SDK for the AttackForge Self‑Service API (SSAPI). It
 
 **Install**
 ```bash
-pip install -e .
+pip install pyattackforge
 ```
 
 **Configuration**
