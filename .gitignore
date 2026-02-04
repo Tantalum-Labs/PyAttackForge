@@ -136,6 +136,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env2
+.envp
 .envrc
 .venv
 .venv-ci
@@ -220,3 +222,7 @@ AGENTS.md
 SPEC.md
 docs/
 PATCH.md
+
+sample data/
+library.py
+writeups.json

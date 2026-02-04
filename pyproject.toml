@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyattackforge"
+version = "0.0.1"
+description = "Python SDK for the AttackForge SSAPI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "httpx>=0.27",
+  "h2>=4.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "python-dotenv>=1.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["."]
+markers = [
+  "integration: live tests requiring ATTACKFORGE_BASE_URL and ATTACKFORGE_API_KEY",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pyattackforge*"]
