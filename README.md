@@ -2,10 +2,26 @@
 
 Next-generation Python SDK for the AttackForge SSAPI (Python 3.10+).
 
+## AI Documentation
+
+`DOCUMENTATION.md` is written for AI coding assistants (Codex/Claude) to implement or extend the library.
+
 ## Install (local)
 
 ```bash
 pip install -e .
+```
+
+## Install (PyPI)
+
+```bash
+pip install pyattackforge
+```
+
+## Build
+
+```bash
+python -m build --sdist --wheel
 ```
 
 ## Configuration
