@@ -130,6 +130,46 @@ class ProjectsResource(BaseResource):
     def update_user_access_on_project(self, project_id: str, user_id: str, payload: Dict[str, Any]) -> Any:
         return self._put(f"/api/ss/project/{project_id}/access/{user_id}", json=payload)
 
+    def add_project_to_group(
+        self,
+        project_id: str,
+        group_id: str,
+        *,
+        project_data: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """
+        Convenience helper to add a project to a group by updating the project's groups list.
+        """
+        if not group_id:
+            raise ValueError("group_id is required")
+        data = project_data if project_data is not None else self.get_project(project_id)
+        project = data
+        if isinstance(project, dict) and isinstance(project.get("data"), dict):
+            project = project["data"]
+        if isinstance(project, dict) and isinstance(project.get("project"), dict):
+            project = project["project"]
+        groups = project.get("groups") or project.get("project_groups") or []
+        group_ids: List[str] = []
+        if isinstance(groups, list):
+            for entry in groups:
+                if isinstance(entry, str) and entry:
+                    group_ids.append(entry)
+                    continue
+                if isinstance(entry, dict):
+                    candidate = entry.get("id") or entry.get("group_id") or entry.get("_id")
+                    if isinstance(candidate, str) and candidate:
+                        group_ids.append(candidate)
+        seen: set = set()
+        deduped: List[str] = []
+        for value in group_ids:
+            if value in seen:
+                continue
+            seen.add(value)
+            deduped.append(value)
+        if group_id not in seen:
+            deduped.append(group_id)
+        return self.update_project(project_id, {"groups": deduped})
+
     def extract_projects_list(self, projects_data: Any) -> List[Dict[str, Any]]:
         if not isinstance(projects_data, dict):
             return []

@@ -2,8 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.2] - 2026-02-04
+- Patch release: groups support and project group helper plus integration tests.
+
 ## [0.2.1] - 2026-02-04
-- Patch release: metadata updates and findings dedupe fixes.
+- Patch release: metadata updates, findings dedupe fixes, and groups API support.
 
 ## [0.2.0] - 2026-02-04
 - Complete reorganization and rewrite using Atlas

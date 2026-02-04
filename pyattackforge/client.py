@@ -11,6 +11,7 @@ from .transport import AttackForgeTransport
 from .resources import (
     AssetsResource,
     ProjectsResource,
+    GroupsResource,
     FindingsResource,
     WriteupsResource,
     TestcasesResource,
@@ -51,6 +52,7 @@ class AttackForgeClient:
 
         self.assets = AssetsResource(self._transport)
         self.projects = ProjectsResource(self._transport)
+        self.groups = GroupsResource(self._transport)
         self.findings = FindingsResource(self._transport)
         self.writeups = WriteupsResource(self._transport)
         self.testcases = TestcasesResource(self._transport)

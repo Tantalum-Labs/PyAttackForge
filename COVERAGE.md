@@ -26,12 +26,13 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 
 ## Out Of Scope (explicitly skipped)
 - Project requests, retest flows, project emails, and project audit logs.
-- Groups, portfolios, analytics, and application audit logs.
+- Portfolios, analytics, and application audit logs.
 
 ## Coverage Matrix
 
 ### SDK Helpers
 - `ProjectsResource.find_project_by_name` for idempotent project lookups.
+- `ProjectsResource.add_project_to_group` for updating project group membership.
 - `TestsuitesResource.find_testsuite_by_name` and `get_testsuite_testcases`.
 - `TestcasesResource.wait_for_project_testcases`, `build_project_testcase_map`, and linked-vulnerability helpers.
 - `FindingsResource.find_project_vulnerability_by_title` and linked-testcase helpers.
@@ -78,6 +79,13 @@ This file captures the SSAPI endpoints in scope for PyAttackForge, the planned S
 | RemoveProjectTeamMembers | PUT | `/api/ss/project/:id/team/remove` | Remove team members | Implemented |
 | UpdateUserAccessOnProject | PUT | `/api/ss/project/:project_id/access/:user_id` | Update project access | Implemented |
 | GetProjectsByGroup | GET | `/api/ss/groups/:id/projects` | Group-scoped projects (group out of scope) | Skipped |
+
+### Groups
+| Endpoint | Method | Path | Notes | Status |
+| --- | --- | --- | --- | --- |
+| GetGroups | GET | `/api/ss/groups` | List groups | Implemented |
+| GetGroupById | GET | `/api/ss/group/:id` | Get group details | Implemented |
+| CreateGroup | POST | `/api/ss/group` | Create group | Implemented |
 
 ### Findings
 | Endpoint | Method | Path | Notes | Status |

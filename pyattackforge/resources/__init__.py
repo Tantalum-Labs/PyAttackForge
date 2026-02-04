@@ -2,6 +2,7 @@
 
 from .assets import AssetsResource
 from .projects import ProjectsResource
+from .groups import GroupsResource
 from .findings import FindingsResource
 from .writeups import WriteupsResource
 from .testcases import TestcasesResource
@@ -13,6 +14,7 @@ from .reports import ReportsResource
 __all__ = [
     "AssetsResource",
     "ProjectsResource",
+    "GroupsResource",
     "FindingsResource",
     "WriteupsResource",
     "TestcasesResource",

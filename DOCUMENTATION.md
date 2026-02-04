@@ -52,6 +52,7 @@ with AttackForgeClient() as client:
 `AttackForgeClient` exposes resource groups:
 - `client.assets`
 - `client.projects`
+- `client.groups`
 - `client.findings`
 - `client.writeups`
 - `client.testcases`
@@ -100,8 +101,14 @@ Projects (`ProjectsResource`)
 - `invite_users_to_project_team(project_id, payload)`
 - `remove_project_team_members(project_id, payload)`
 - `update_user_access_on_project(project_id, user_id, payload)`
+- `add_project_to_group(project_id, group_id, project_data=None)`
 - `extract_projects_list(projects_data)`
 - `find_project_by_name(name, params=None)`
+
+Groups (`GroupsResource`)
+- `get_groups(params=None)`
+- `get_group(group_id, params=None)`
+- `create_group(payload)`
 
 Findings (`FindingsResource`)
 - `create_vulnerability(payload)`
