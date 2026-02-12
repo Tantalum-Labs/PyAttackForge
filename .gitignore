@@ -209,7 +209,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-test*.py
+# Ignore ad-hoc test scripts at repo root only. A global pattern can
+# accidentally hide package modules like pyattackforge/resources/testcases.py.
+/test*.py
 
 pyattackforge.json
 scripts/

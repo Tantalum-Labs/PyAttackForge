@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4] - 2026-02-12
+- Patch release: fixed package contents so `pyattackforge.resources.testcases` and
+  `pyattackforge.resources.testsuites` are included in published artifacts.
+
 ## [0.2.3] - 2026-02-04
 - Patch release: group test hardening, docs updates, and version bump.
 
