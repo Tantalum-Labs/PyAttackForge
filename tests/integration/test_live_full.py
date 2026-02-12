@@ -1379,7 +1379,7 @@ def test_notes_calls(client, vulnerability, remediation_note, project, base_proj
         with open(note_file, "w", encoding="utf-8") as handle:
             handle.write("remediation")
         try:
-            upload = client.notes.upload_remediation_note_file(vulnerability["id"], remediation_note["id"], note_file)
+            client.notes.upload_remediation_note_file(vulnerability["id"], remediation_note["id"], note_file)
             report = client.reports.get_project_report_data(base_project["id"], "raw", {"excludeBinaries": False})
             existing = find_remediation_note_file_from_report(report)
             assert existing is not None, "Remediation note file not found in report data"
